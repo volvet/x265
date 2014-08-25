@@ -613,7 +613,7 @@ void Encoder::printSummary()
             continue;
 
         StatisticLog finalLog;
-        for (int depth = 0; depth < (int)g_maxCUDepth; depth++)
+        for (uint32_t depth = 0; depth <= g_maxCUDepth; depth++)
         {
             for (int i = 0; i < poolThreadCount; i++)
             {
@@ -628,7 +628,7 @@ void Encoder::printSummary()
                     finalLog.cuInterDistribution[depth][m] += enclog.cuInterDistribution[depth][m];
                 }
 
-                if (depth == (int)g_maxCUDepth - 1)
+                if (depth == g_maxCUDepth)
                     finalLog.cntIntraNxN += enclog.cntIntraNxN;
                 if (sliceType != I_SLICE)
                 {
@@ -729,14 +729,14 @@ void Encoder::printSummary()
                                cuIntraDistribution[1], cuIntraDistribution[2]);
                 if (sliceType != I_SLICE)
                 {
-                    if (depth == (int)g_maxCUDepth - 1)
+                    if (depth == g_maxCUDepth)
                         len += sprintf(stats + len, " %dx%d "X265_LL "%%", cuSize / 2, cuSize / 2, cntIntraNxN);
                 }
 
                 len += sprintf(stats + len, ")");
                 if (sliceType == I_SLICE)
                 {
-                    if (depth == (int)g_maxCUDepth - 1)
+                    if (depth == g_maxCUDepth)
                         len += sprintf(stats + len, " %dx%d: "X265_LL "%%", cuSize / 2, cuSize / 2, cntIntraNxN);
                 }
             }
@@ -1074,15 +1074,14 @@ void Encoder::getStreamHeaders(NALList& list, Entropy& sbacCoder, Bitstream& bs)
 
     if (m_param->bEmitHRDSEI)
     {
+        /* Picture Timing and Buffering Period SEI require the SPS to be "activated" */
         SEIActiveParameterSets sei;
-        sei.m_activeVPSId = 0;
-        sei.m_fullRandomAccessFlag = false;
-        sei.m_noParamSetUpdateFlag = false;
-        sei.m_numSpsIdsMinus1 = 0;
-        sei.m_activeSeqParamSetId = 0;
+        sei.m_selfContainedCvsFlag = true;
+        sei.m_noParamSetUpdateFlag = true;
 
         bs.resetBits();
         sei.write(bs, m_sps);
+        bs.writeByteAlignment();
         list.serialize(NAL_UNIT_PREFIX_SEI, bs);
     }
 }
@@ -1099,8 +1098,8 @@ void Encoder::initSPS(SPS *sps)
     sps->picWidthInLumaSamples = m_param->sourceWidth;
     sps->picHeightInLumaSamples = m_param->sourceHeight;
 
-    sps->log2MinCodingBlockSize = g_maxLog2CUSize - (g_maxCUDepth - g_addCUDepth);
-    sps->log2DiffMaxMinCodingBlockSize = g_maxCUDepth - g_addCUDepth;
+    sps->log2MinCodingBlockSize = g_maxLog2CUSize - g_maxCUDepth;
+    sps->log2DiffMaxMinCodingBlockSize = g_maxCUDepth;
 
     sps->quadtreeTULog2MaxSize = m_quadtreeTULog2MaxSize;
     sps->quadtreeTULog2MinSize = m_quadtreeTULog2MinSize;
@@ -1110,7 +1109,7 @@ void Encoder::initSPS(SPS *sps)
     sps->bUseSAO = m_param->bEnableSAO;
 
     sps->bUseAMP = m_param->bEnableAMP;
-    sps->maxAMPDepth = m_param->bEnableAMP ? g_maxCUDepth - g_addCUDepth : 0;
+    sps->maxAMPDepth = m_param->bEnableAMP ? g_maxCUDepth : 0;
 
     sps->maxDecPicBuffering = m_vps.maxDecPicBuffering;
     sps->numReorderPics = m_vps.numReorderPics;
@@ -1156,27 +1155,17 @@ void Encoder::initSPS(SPS *sps)
 
 void Encoder::initPPS(PPS *pps)
 {
-    bool isVbv = m_param->rc.vbvBufferSize > 0 && m_param->rc.vbvMaxBitrate > 0;
+    bool bIsVbv = m_param->rc.vbvBufferSize > 0 && m_param->rc.vbvMaxBitrate > 0;
 
-    m_maxCuDQPDepth = 0;
-
-    /* TODO: This variable m_maxCuDQPDepth needs to be a CLI option to allow us to choose AQ granularity */
-    bool bUseDQP = (m_maxCuDQPDepth > 0 || m_param->rc.aqMode || isVbv) ? true : false;
-
-    if ((m_maxCuDQPDepth == 0) && (m_param->rc.qp == -QP_BD_OFFSET))
-        bUseDQP = false;
-
-    if (bUseDQP)
+    if (!m_param->bLossless && (m_param->rc.aqMode || bIsVbv))
     {
         pps->bUseDQP = true;
-        pps->maxCuDQPDepth = m_maxCuDQPDepth;
-        pps->minCuDQPSize = g_maxCUSize >> pps->maxCuDQPDepth;
+        pps->maxCuDQPDepth = 0; /* TODO: make configurable? */
     }
     else
     {
         pps->bUseDQP = false;
         pps->maxCuDQPDepth = 0;
-        pps->minCuDQPSize = g_maxCUSize >> pps->maxCuDQPDepth;
     }
 
     pps->chromaCbQpOffset = m_param->cbQpOffset;
@@ -1197,15 +1186,19 @@ void Encoder::initPPS(PPS *pps)
     pps->deblockingFilterBetaOffsetDiv2 = 0;
     pps->deblockingFilterTcOffsetDiv2 = 0;
 
-    // options affected by parallelization
     pps->bEntropyCodingSyncEnabled = m_param->bEnableWavefront;
-    pps->bCabacInitPresent = m_param->frameNumThreads == 1; // only deterministic with one frame thread
-    pps->encCABACTableIdx = I_SLICE;
 }
 
 void Encoder::configure(x265_param *p)
 {
     this->m_param = p;
+
+    uint32_t maxLog2CUSize = g_log2Size[p->maxCUSize];
+    int rows = (p->sourceHeight + p->maxCUSize - 1) >> maxLog2CUSize;
+
+    // Do not allow WPP if only one row, it is pointless and unstable
+    if (rows == 1)
+        p->bEnableWavefront = 0;
 
     // Trim the thread pool if WPP is disabled
     if (!p->bEnableWavefront)
@@ -1213,15 +1206,13 @@ void Encoder::configure(x265_param *p)
 
     setThreadPool(ThreadPool::allocThreadPool(p->poolNumThreads));
     int poolThreadCount = ThreadPool::getThreadPool()->getThreadCount();
-    uint32_t maxLog2CUSize = g_convertToBit[p->maxCUSize] + 2;
-    int rows = (p->sourceHeight + p->maxCUSize - 1) >> maxLog2CUSize;
 
-    if (p->frameNumThreads == 0)
+    if (!p->frameNumThreads)
     {
         // auto-detect frame threads
         int cpuCount = getCpuCount();
         if (poolThreadCount <= 1)
-            p->frameNumThreads = X265_MIN(cpuCount, rows / 2);
+            p->frameNumThreads = X265_MIN(cpuCount, (rows + 1) / 2);
         else if (cpuCount > 32)
             p->frameNumThreads = 6; // dual-socket 10-core IvyBridge or higher
         else if (cpuCount >= 16)
@@ -1250,6 +1241,11 @@ void Encoder::configure(x265_param *p)
     if (!p->saoLcuBasedOptimization && p->frameNumThreads > 1)
     {
         x265_log(p, X265_LOG_INFO, "Warning: picture-based SAO used with frame parallelism\n");
+    }
+    if (p->bCULossless)
+    {
+        x265_log(p, X265_LOG_WARNING, "CU-Lossless is disabled in this release of x265\n");
+        p->bCULossless = 0;
     }
 
     if (p->keyframeMax < 0)
@@ -1290,8 +1286,12 @@ void Encoder::configure(x265_param *p)
         p->crQpOffset += 6;
     }
 
-    // disable RDOQ if psy-rd is enabled; until we make it psy-aware
-    m_bEnableRDOQ = p->psyRd == 0.0 && p->rdLevel >= 4;
+    /* disable RDOQ if rdlevel < 4 */
+    m_bEnableRDOQ = p->rdLevel >= 4;
+
+    /* disable psy-rdoq if RDOQ is not enabled (do not show in logs as in-use) */
+    if (!m_bEnableRDOQ)
+        p->psyRdoq = 0;
 
     if (p->bLossless)
     {
@@ -1327,13 +1327,16 @@ void Encoder::configure(x265_param *p)
     if (p->rc.aqMode == X265_AQ_NONE && p->rc.cuTree == 0)
         p->rc.aqStrength = 0;
 
-    if (p->rc.aqStrength == 0)
-        p->rc.aqMode = 0;
-
     if (p->internalCsp != X265_CSP_I420)
     {
         x265_log(p, X265_LOG_WARNING, "!! HEVC Range Extension specifications are not finalized !!\n");
         x265_log(p, X265_LOG_WARNING, "!! This output bitstream may not be compliant with the final spec !!\n");
+    }
+
+    if (p->scalingLists && p->internalCsp == X265_CSP_I444)
+    {
+        x265_log(p, X265_LOG_WARNING, "Scaling lists are not yet supported for 4:4:4 color space\n");
+        p->scalingLists = 0;
     }
 
     if (p->interlaceMode)
@@ -1360,7 +1363,7 @@ void Encoder::configure(x265_param *p)
     {
         const char *s = NULL;
 
-        if (p->psyRd)
+        if (p->psyRd || p->psyRdoq)
         {
             s = p->bEnablePsnr ? "psnr" : "ssim";
             x265_log(p, X265_LOG_WARNING, "--%s used with psy on: results will be invalid!\n", s);
@@ -1370,7 +1373,7 @@ void Encoder::configure(x265_param *p)
             x265_log(p, X265_LOG_WARNING, "--ssim used with AQ off: results will be invalid!\n");
             s = "ssim";
         }
-        else if (p->rc.aqMode && p->bEnablePsnr)
+        else if (p->rc.aqStrength > 0 && p->bEnablePsnr)
         {
             x265_log(p, X265_LOG_WARNING, "--psnr used with AQ on: results will be invalid!\n");
             s = "psnr";
@@ -1378,11 +1381,6 @@ void Encoder::configure(x265_param *p)
         if (s)
             x265_log(p, X265_LOG_WARNING, "--tune %s should be used if attempting to benchmark %s!\n", s, s);
     }
-
-    if (p->bOpenGOP && p->rc.bStatRead)
-        p->lookaheadDepth = 0;
-
-    //====== Coding Tools ========
 
     uint32_t tuQTMaxLog2Size = maxLog2CUSize - 1;
     m_quadtreeTULog2MaxSize = tuQTMaxLog2Size;
@@ -1397,13 +1395,11 @@ void Encoder::configure(x265_param *p)
     m_conformanceWindow.leftOffset = 0;
 
     //======== set pad size if width is not multiple of the minimum CU size =========
-    uint32_t maxCUDepth = (uint32_t)g_convertToBit[p->maxCUSize];
-    uint32_t minCUDepth = (p->maxCUSize >> (maxCUDepth - 1));
-    if ((p->sourceWidth % minCUDepth) != 0)
+    const uint32_t minCUSize = MIN_CU_SIZE;
+    if (p->sourceWidth & (minCUSize - 1))
     {
-        uint32_t padsize = 0;
-        uint32_t rem = p->sourceWidth % minCUDepth;
-        padsize = minCUDepth - rem;
+        uint32_t rem = p->sourceWidth & (minCUSize - 1);
+        uint32_t padsize = minCUSize - rem;
         p->sourceWidth += padsize;
 
         /* set the confirmation window offsets  */
@@ -1412,11 +1408,10 @@ void Encoder::configure(x265_param *p)
     }
 
     //======== set pad size if height is not multiple of the minimum CU size =========
-    if ((p->sourceHeight % minCUDepth) != 0)
+    if (p->sourceHeight & (minCUSize - 1))
     {
-        uint32_t padsize = 0;
-        uint32_t rem = p->sourceHeight % minCUDepth;
-        padsize = minCUDepth - rem;
+        uint32_t rem = p->sourceHeight & (minCUSize - 1);
+        uint32_t padsize = minCUSize - rem;
         p->sourceHeight += padsize;
 
         /* set the confirmation window offsets  */

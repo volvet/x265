@@ -170,6 +170,17 @@ typedef int32_t  coeff_t;      // transform coefficient
             goto fail; \
         } \
     }
+#define CHECKED_MALLOC_ZERO(var, type, count) \
+    { \
+        var = (type*)x265_malloc(sizeof(type) * (count)); \
+        if (var) \
+            memset((void*)var, 0, sizeof(type) * (count)); \
+        else \
+        { \
+            x265_log(NULL, X265_LOG_ERROR, "malloc of size %d failed\n", sizeof(type) * (count)); \
+            goto fail; \
+        } \
+    }
 
 #if defined(_MSC_VER)
 #define X265_LOG2F(x) (logf((float)(x)) * 1.44269504088896405f)
@@ -179,27 +190,101 @@ typedef int32_t  coeff_t;      // transform coefficient
 #define X265_LOG2(x)  log2(x)
 #endif
 
+namespace x265 {
+
+// NOTE: MUST be alignment to 16 or 32 bytes for asm code
 struct NoiseReduction
 {
-    bool bNoiseReduction;
-
     /* 0 = luma 4x4, 1 = luma 8x8, 2 = luma 16x16, 3 = luma 32x32
      * 4 = chroma 4x4, 5 = chroma 8x8, 6 = chroma 16x16, 7 = chroma 32x32 */
-    uint16_t (*offset)[1024];
-    uint32_t (*residualSum)[1024];
-    uint32_t *count;
-
     uint16_t offsetDenoise[8][1024];
-    uint32_t residualSumBuf[4][8][1024];
-    uint32_t countBuf[4][8];
+    uint32_t residualSum[8][1024];
+    uint32_t count[8];
 };
 
-enum SCALING_LIST_PARAMETER
+struct SAOQTPart
 {
-    SCALING_LIST_OFF,
-    SCALING_LIST_DEFAULT,
-    SCALING_LIST_FILE,
+    enum { NUM_DOWN_PART = 4 };
+
+    int     bestType;
+    int     length;
+    int     subTypeIdx;  // indicates EO class or BO band position
+    int     offset[4];
+    int     startCUX;
+    int     startCUY;
+    int     endCUX;
+    int     endCUY;
+
+    int     partIdx;
+    int     partLevel;
+    int     partCol;
+    int     partRow;
+
+    int     downPartsIdx[NUM_DOWN_PART];
+    int     upPartIdx;
+
+    bool    bSplit;
+
+    bool    bProcessed;
+    double  minCost;
+    int64_t minDist;
+    int     minRate;
 };
+
+struct SaoLcuParam
+{
+    bool mergeUpFlag;
+    bool mergeLeftFlag;
+    int  typeIdx;
+    int  subTypeIdx;    // indicates EO class or BO band position
+    int  offset[4];
+    int  partIdx;
+    int  partIdxTmp;
+    int  length;
+
+    void reset()
+    {
+        mergeUpFlag = false;
+        mergeLeftFlag = false;
+        typeIdx = -1;
+        subTypeIdx = 0;
+        offset[0] = 0;
+        offset[1] = 0;
+        offset[2] = 0;
+        offset[3] = 0;
+    }
+};
+
+struct SAOParam
+{
+    SaoLcuParam* saoLcuParam[3];
+    SAOQTPart*   saoPart[3];
+    bool         bSaoFlag[2];
+    bool         oneUnitFlag[3];
+    int          maxSplitLevel;
+    int          numCuInHeight;
+    int          numCuInWidth;
+
+    SAOParam()
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            saoPart[i] = NULL;
+            saoLcuParam[i] = NULL;
+        }
+    }
+    ~SAOParam()
+    {
+        delete[] saoPart[0];
+        delete[] saoPart[1];
+        delete[] saoPart[2];
+        delete[] saoLcuParam[0];
+        delete[] saoLcuParam[1];
+        delete[] saoLcuParam[2];
+    }
+};
+
+}
 
 /* defined in common.cpp */
 int64_t x265_mdate(void);
@@ -213,4 +298,5 @@ double x265_qScale2qp(double qScale);
 double x265_qp2qScale(double qp);
 uint32_t x265_picturePlaneSize(int csp, int width, int height, int plane);
 char* x265_slurp_file(const char *filename);
+
 #endif // ifndef X265_COMMON_H

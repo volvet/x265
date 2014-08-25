@@ -85,12 +85,24 @@ struct TURecurse
     }
 };
 
+struct EstBitsSbac
+{
+    int significantCoeffGroupBits[NUM_SIG_CG_FLAG_CTX][2];
+    int significantBits[NUM_SIG_FLAG_CTX][2];
+    int lastXBits[10];
+    int lastYBits[10];
+    int greaterOneBits[NUM_ONE_FLAG_CTX][2];
+    int levelAbsBits[NUM_ABS_FLAG_CTX][2];
+    int blockCbpBits[NUM_QT_CBF_CTX][2];
+    int blockRootCbpBits[2];
+};
+
 class Entropy : public SyntaxElementWriter
 {
 public:
 
     uint64_t      m_pad;
-    ContextModel  m_contextModels[MAX_OFF_CTX_MOD];
+    uint8_t       m_contextState[160]; // MAX_OFF_CTX_MOD + padding
 
     /* CABAC state */
     uint32_t      m_low;
@@ -99,6 +111,7 @@ public:
     int           m_numBufferedBytes;
     int           m_bitsLeft;
     uint64_t      m_fracBits;
+    EstBitsSbac   m_estBitsSbac;
 
     Entropy();
 
@@ -120,6 +133,7 @@ public:
     void loadIntraDirModeLuma(Entropy& src);
     void store(Entropy& dest);
     void loadContexts(Entropy& src)       { copyContextsFrom(src); }
+    void copyState(Entropy& other);
 
     void codeVPS(VPS* vps);
     void codeSPS(SPS* sps, ScalingList *scalingList, ProfileTierLevel *ptl);
@@ -133,11 +147,11 @@ public:
     void codeShortTermRefPicSet(RPS* rps);
     void codeSliceFinish()                   { finish(); }
     void codeTerminatingBit(uint32_t lsLast) { encodeBinTrm(lsLast); }
-    void determineCabacInitIdx(Slice *slice, PPS *pps);
 
+    void encodeCU(TComDataCU* cu);
     void codeSaoOffset(SaoLcuParam* saoLcuParam, uint32_t compIdx);
     void codeSaoUnitInterleaving(int compIdx, bool saoFlag, int rx, int ry, SaoLcuParam* saoLcuParam, int cuAddrInSlice, int cuAddrUpInSlice, int allowMergeLeft, int allowMergeUp);
-    void codeSaoMerge(uint32_t code) { encodeBin(code, m_contextModels[OFF_SAO_MERGE_FLAG_CTX]); }
+    void codeSaoMerge(uint32_t code) { encodeBin(code, m_contextState[OFF_SAO_MERGE_FLAG_CTX]); }
 
     void codeCUTransquantBypassFlag(TComDataCU* cu, uint32_t absPartIdx);
     void codeSkipFlag(TComDataCU* cu, uint32_t absPartIdx);
@@ -162,29 +176,30 @@ public:
     void codeIntraDirChroma(TComDataCU* cu, uint32_t absPartIdx);
 
     // RDO functions
-    void estBit(EstBitsSbac& estBitsSbac, uint32_t log2TrSize, TextType ttype);
+    void estBit(EstBitsSbac& estBitsSbac, uint32_t log2TrSize, bool bIsLuma);
     void estCBFBit(EstBitsSbac& estBitsSbac);
-    void estSignificantCoeffGroupMapBit(EstBitsSbac& estBitsSbac, TextType ttype);
-    void estSignificantMapBit(EstBitsSbac& estBitsSbac, uint32_t log2TrSize, TextType ttype);
-    void estSignificantCoefficientsBit(EstBitsSbac& estBitsSbac, TextType ttype);
+    void estSignificantCoeffGroupMapBit(EstBitsSbac& estBitsSbac, bool bIsLuma);
+    void estSignificantMapBit(EstBitsSbac& estBitsSbac, uint32_t log2TrSize, bool bIsLuma);
+    void estSignificantCoefficientsBit(EstBitsSbac& estBitsSbac, bool bIsLuma);
 
 private:
 
     /* CABAC private methods */
     void start();
     void finish();
-    void copyState(Entropy& other);
-    void flush();
 
-    void encodeBin(uint32_t binValue, ContextModel& ctxModel);
+    void encodeBin(uint32_t binValue, uint8_t& ctxModel);
     void encodeBinEP(uint32_t binValue);
     void encodeBinsEP(uint32_t binValues, int numBins);
     void encodeBinTrm(uint32_t binValue);
 
+    void encodeCU(TComDataCU* cu, uint32_t absPartIdx, uint32_t depth, bool bInsidePicture, bool& bEncodeDQP);
+    void finishCU(TComDataCU* cu, uint32_t absPartIdx, uint32_t depth);
+
     void writeOut();
 
     /* SBac private methods */
-    void writeUnaryMaxSymbol(uint32_t symbol, ContextModel* scmModel, int offset, uint32_t maxSymbol);
+    void writeUnaryMaxSymbol(uint32_t symbol, uint8_t* scmModel, int offset, uint32_t maxSymbol);
     void writeEpExGolomb(uint32_t symbol, uint32_t count);
     void writeCoefRemainExGolomb(uint32_t symbol, const uint32_t absGoRice);
 
@@ -205,7 +220,7 @@ private:
     void codeSAOSign(uint32_t code)                  { encodeBinEP(code); }
 
     void codeDeltaQP(TComDataCU* cu, uint32_t absPartIdx);
-    void codeLastSignificantXY(uint32_t posx, uint32_t posy, uint32_t log2TrSize, TextType ttype, uint32_t scanIdx);
+    void codeLastSignificantXY(uint32_t posx, uint32_t posy, uint32_t log2TrSize, bool bIsLuma, uint32_t scanIdx);
     void codeTransformSkipFlags(TComDataCU* cu, uint32_t absPartIdx, uint32_t trSize, TextType ttype);
 
     struct CoeffCodeState

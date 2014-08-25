@@ -31,6 +31,7 @@ namespace x265 {
 
 class Frame;
 class PicList;
+class MotionReference;
 
 struct RPS
 {
@@ -218,7 +219,6 @@ struct SPS
 struct PPS
 {
     uint32_t maxCuDQPDepth;
-    uint32_t minCuDQPSize;
 
     int      chromaCbQpOffset;       // use param
     int      chromaCrQpOffset;       // use param
@@ -232,9 +232,6 @@ struct PPS
     bool     bTransformSkipEnabled;     // use param
     bool     bEntropyCodingSyncEnabled; // use param
     bool     bSignHideEnabled;          // use param
-
-    bool     bCabacInitPresent;
-    uint32_t encCABACTableIdx;          // Used to transmit table selection across slices
 
     bool     bDeblockingFilterControlPresent;
     bool     bPicDisableDeblockingFilter;
@@ -278,6 +275,7 @@ public:
     const PPS*  m_pps;
     Frame*      m_pic;
     WeightParam m_weightPredTable[2][MAX_NUM_REF][3]; // [list][refIdx][0:Y, 1:U, 2:V]
+    MotionReference (*m_mref)[MAX_NUM_REF + 1];
     RPS         m_rps;
 
     NalUnitType m_nalUnitType;
@@ -288,6 +286,7 @@ public:
     int         m_lastIDR;
 
     bool        m_bCheckLDC;       // TODO: is this necessary?
+    bool        m_sLFaseFlag;      // loop filter boundary flag
     bool        m_colFromL0Flag;   // collocated picture from List0 or List1 flag
     uint32_t    m_colRefIdx;       // never modified
     
@@ -301,6 +300,7 @@ public:
     Slice()
     {
         m_lastIDR = 0;
+        m_sLFaseFlag = true;
         m_numRefIdx[0] = m_numRefIdx[1] = 0;
         for (int i = 0; i < MAX_NUM_REF; i++)
         {
@@ -320,17 +320,12 @@ public:
     bool getRapPicFlag() const
     {
         return m_nalUnitType == NAL_UNIT_CODED_SLICE_IDR_W_RADL
-            || m_nalUnitType == NAL_UNIT_CODED_SLICE_IDR_N_LP
-            || m_nalUnitType == NAL_UNIT_CODED_SLICE_BLA_N_LP
-            || m_nalUnitType == NAL_UNIT_CODED_SLICE_BLA_W_RADL
-            || m_nalUnitType == NAL_UNIT_CODED_SLICE_BLA_W_LP
             || m_nalUnitType == NAL_UNIT_CODED_SLICE_CRA;
     }
 
     bool getIdrPicFlag() const
     {
-        return m_nalUnitType == NAL_UNIT_CODED_SLICE_IDR_W_RADL
-            || m_nalUnitType == NAL_UNIT_CODED_SLICE_IDR_N_LP;
+        return m_nalUnitType == NAL_UNIT_CODED_SLICE_IDR_W_RADL;
     }
 
     bool isIRAP() const   { return m_nalUnitType >= 16 && m_nalUnitType <= 23; }

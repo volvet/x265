@@ -47,6 +47,16 @@
 namespace x265 {
 // private namespace
 
+// TU settings for entropy encoding
+struct TUEntropyCodingParameters
+{
+    const uint16_t *scan;
+    const uint16_t *scanCG;
+    ScanType        scanType;
+    uint32_t        log2TrSizeCG;
+    uint32_t        firstSignificanceMapContext;
+};
+
 class Frame;
 class Slice;
 
@@ -158,7 +168,6 @@ public:
     int           m_chromaFormat;
     int           m_hChromaShift;
     int           m_vChromaShift;
-    uint32_t      m_unitMask;        ///< mask for mapping index to CompressMV field
 
     // -------------------------------------------------------------------------------------------------------------------
     // CU data
@@ -237,7 +246,7 @@ public:
     // -------------------------------------------------------------------------------------------------------------------
     // create / destroy / initialize / copy
     // -------------------------------------------------------------------------------------------------------------------
-    void          create(TComDataCU *p, uint32_t numPartition, uint32_t cuSize, int unitSize, int csp, int index, bool isLossLess);
+    void          create(TComDataCU *p, uint32_t numPartition, uint32_t cuSize, int csp, int index, bool isLossLess);
 
     bool          initialize(uint32_t numPartition, uint32_t sizeL, uint32_t sizeC, uint32_t numBlocks, bool isLossless);
 
@@ -250,9 +259,9 @@ public:
     void          copyToSubCU(TComDataCU* lcu, uint32_t partUnitIdx, uint32_t depth);
     void          copyPartFrom(TComDataCU* cu, uint32_t partUnitIdx, uint32_t depth, bool isRDObasedAnalysis = true);
 
-    void          copyToPic(uint8_t depth);
-    void          copyToPic(uint8_t depth, uint32_t partIdx, uint32_t partDepth);
-    void          copyCodedToPic(uint8_t depth);
+    void          copyToPic(uint32_t depth);
+    void          copyToPic(uint32_t depth, uint32_t partIdx, uint32_t partDepth);
+    void          copyCodedToPic(uint32_t depth);
 
     // -------------------------------------------------------------------------------------------------------------------
     // member functions for CU description
@@ -413,7 +422,7 @@ public:
 
     void          getMvField(TComDataCU* cu, uint32_t absPartIdx, int picList, TComMvField& rcMvField);
 
-    int           fillMvpCand(uint32_t partIdx, uint32_t partAddr, int picList, int refIdx, AMVPInfo* info, MV *mvc);
+    int           fillMvpCand(uint32_t partIdx, uint32_t partAddr, int picList, int refIdx, MV* amvpCand, MV* mvc);
     bool          isDiffMER(int xN, int yN, int xP, int yP);
     void          getPartPosition(uint32_t partIdx, int& xP, int& yP, int& nPSW, int& nPSH);
     void          setMVPIdx(int picList, uint32_t idx, int mvpIdx) { m_mvpIdx[picList][idx] = (uint8_t)mvpIdx; }
@@ -488,7 +497,8 @@ public:
 
     uint32_t&     getTotalNumPart()     { return m_numPartitions; }
 
-    uint32_t      getCoefScanIdx(uint32_t absPartIdx, uint32_t log2TrSize, bool bIsLuma, bool bIsIntra);
+    ScanType      getCoefScanIdx(uint32_t absPartIdx, uint32_t log2TrSize, bool bIsLuma, bool bIsIntra);
+    void          getTUEntropyCodingParameters(TUEntropyCodingParameters &result, uint32_t absPartIdx, uint32_t log2TrSize, bool bIsLuma);
 
     // -------------------------------------------------------------------------------------------------------------------
     // member functions to support multiple color space formats

@@ -33,15 +33,13 @@ class ScalingList
 {
 public:
 
-    static const int NUM_LISTS = 6;            // list number for quantization matrix
-    static const int NUM_REM = 6;              // remainder of QP/6
-    static const int START_VALUE = 8;          // start value for dpcm mode
-    static const int MAX_MATRIX_COEF_NUM = 64; // max coefficient number for quantization matrix
-    static const int MAX_MATRIX_SIZE_NUM = 8;  // max size number for quantization matrix
-    static const int NUM_SIZES = 4;            // 4x4, 8x8, 16x16, 32x32
+    enum { NUM_SIZES = 4 };            // 4x4, 8x8, 16x16, 32x32
+    enum { NUM_LISTS = 6 };            // number of quantization matrix lists (YUV * inter/intra)
+    enum { NUM_REM = 6 };              // number of remainders of QP/6
+    enum { MAX_MATRIX_COEF_NUM = 64 }; // max coefficient number per quantization matrix
+    enum { MAX_MATRIX_SIZE_NUM = 8 };  // max size number for quantization matrix
 
     static const int     s_numCoefPerSize[NUM_SIZES];
-    static const int     s_numListsAtSize[NUM_SIZES];
     static const int32_t s_invQuantScales[NUM_REM];
     static const int32_t s_quantScales[NUM_REM];
 
@@ -50,7 +48,6 @@ public:
 
     int32_t* m_quantCoef[NUM_SIZES][NUM_LISTS][NUM_REM];   // array of quantization matrix coefficient 4x4
     int32_t* m_dequantCoef[NUM_SIZES][NUM_LISTS][NUM_REM]; // array of dequantization matrix coefficient 4x4
-    double*  m_errScale[NUM_SIZES][NUM_LISTS][NUM_REM];
 
     bool     m_bEnabled;
     bool     m_bDataPresent; // non-default scaling lists must be signaled
@@ -69,7 +66,6 @@ public:
 protected:
 
     static const int SCALING_LIST_DC = 16;    // default DC value
-    static const int s_scalingListSizeX[NUM_SIZES];
 
     int32_t* getScalingListDefaultAddress(int sizeId, int listId);
     void     processDefaultMarix(int sizeId, int listId);

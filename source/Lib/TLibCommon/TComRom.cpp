@@ -99,17 +99,6 @@ void initROM()
 {
     if (ATOMIC_CAS32(&initialized, 0, 1) == 1)
         return;
-
-    int i, c;
-
-    // g_aucConvertToBit[ x ]: log2(x/4), if x=4 -> 0, x=8 -> 1, x=16 -> 2, ...
-    ::memset(g_convertToBit, -1, sizeof(g_convertToBit));
-    c = 0;
-    for (i = 4; i <= MAX_CU_SIZE; i *= 2)
-    {
-        g_convertToBit[i] = c;
-        c++;
-    }
 }
 
 void destroyROM()
@@ -123,10 +112,9 @@ void destroyROM()
 // ====================================================================================================================
 
 uint32_t g_maxLog2CUSize = MAX_LOG2_CU_SIZE;
-uint32_t g_maxCUSize   = MAX_CU_SIZE;
-uint32_t g_maxCUDepth  = MAX_FULL_DEPTH;
-uint32_t g_addCUDepth  = 1;
-uint32_t g_log2UnitSize = 2;
+uint32_t g_maxCUSize     = MAX_CU_SIZE;
+uint32_t g_maxFullDepth  = NUM_FULL_DEPTH - 1;
+uint32_t g_maxCUDepth    = NUM_CU_DEPTH - 1;
 uint32_t g_zscanToRaster[MAX_NUM_SPU_W * MAX_NUM_SPU_W] = { 0, };
 uint32_t g_rasterToZscan[MAX_NUM_SPU_W * MAX_NUM_SPU_W] = { 0, };
 uint32_t g_rasterToPelX[MAX_NUM_SPU_W * MAX_NUM_SPU_W] = { 0, };
@@ -134,11 +122,11 @@ uint32_t g_rasterToPelY[MAX_NUM_SPU_W * MAX_NUM_SPU_W] = { 0, };
 
 const uint32_t g_puOffset[8] = { 0, 8, 4, 4, 2, 10, 1, 5 };
 
-void initZscanToRaster(int maxDepth, int depth, uint32_t startVal, uint32_t*& curIdx)
+void initZscanToRaster(uint32_t maxFullDepth, uint32_t depth, uint32_t startVal, uint32_t*& curIdx)
 {
-    int stride = 1 << (maxDepth - 1);
+    uint32_t stride = 1 << maxFullDepth;
 
-    if (depth == maxDepth)
+    if (depth > maxFullDepth)
     {
         curIdx[0] = startVal;
         curIdx++;
@@ -146,41 +134,38 @@ void initZscanToRaster(int maxDepth, int depth, uint32_t startVal, uint32_t*& cu
     else
     {
         int step = stride >> depth;
-        initZscanToRaster(maxDepth, depth + 1, startVal,                        curIdx);
-        initZscanToRaster(maxDepth, depth + 1, startVal + step,                 curIdx);
-        initZscanToRaster(maxDepth, depth + 1, startVal + step * stride,        curIdx);
-        initZscanToRaster(maxDepth, depth + 1, startVal + step * stride + step, curIdx);
+        initZscanToRaster(maxFullDepth, depth + 1, startVal,                        curIdx);
+        initZscanToRaster(maxFullDepth, depth + 1, startVal + step,                 curIdx);
+        initZscanToRaster(maxFullDepth, depth + 1, startVal + step * stride,        curIdx);
+        initZscanToRaster(maxFullDepth, depth + 1, startVal + step * stride + step, curIdx);
     }
 }
 
-void initRasterToZscan(uint32_t maxCUSize, uint32_t maxDepth)
+void initRasterToZscan(uint32_t maxFullDepth)
 {
-    uint32_t  unitSize = maxCUSize  >> (maxDepth - 1);
+    uint32_t numPartitions = 1 << maxFullDepth * 2;
 
-    uint32_t  numPartInCUSize  = (uint32_t)maxCUSize / unitSize;
-
-    for (uint32_t i = 0; i < numPartInCUSize * numPartInCUSize; i++)
+    for (uint32_t i = 0; i < numPartitions; i++)
     {
         g_rasterToZscan[g_zscanToRaster[i]] = i;
     }
 }
 
-void initRasterToPelXY(uint32_t maxCUSize, uint32_t maxDepth)
+void initRasterToPelXY(uint32_t maxFullDepth)
 {
     uint32_t i;
 
     uint32_t* tempX = &g_rasterToPelX[0];
     uint32_t* tempY = &g_rasterToPelY[0];
 
-    uint32_t  unitSize  = maxCUSize >> (maxDepth - 1);
-
-    uint32_t  numPartInCUSize = maxCUSize / unitSize;
+    uint32_t numPartInCUSize = 1 << maxFullDepth;
+    uint32_t numPartitions   = 1 << maxFullDepth * 2;
 
     tempX[0] = 0;
     tempX++;
     for (i = 1; i < numPartInCUSize; i++)
     {
-        tempX[0] = tempX[-1] + unitSize;
+        tempX[0] = tempX[-1] + UNIT_SIZE;
         tempX++;
     }
 
@@ -190,9 +175,9 @@ void initRasterToPelXY(uint32_t maxCUSize, uint32_t maxDepth)
         tempX += numPartInCUSize;
     }
 
-    for (i = 1; i < numPartInCUSize * numPartInCUSize; i++)
+    for (i = 1; i < numPartitions; i++)
     {
-        tempY[i] = (i / numPartInCUSize) * unitSize;
+        tempY[i] = (i >> maxFullDepth) * UNIT_SIZE;
     }
 }
 
@@ -301,7 +286,14 @@ const uint8_t g_chromaScale[chromaQPMappingTableSize] =
 const uint8_t g_chroma422IntraAngleMappingTable[36] =
 { 0, 1, 2, 2, 2, 2, 3, 5, 7, 8, 10, 12, 13, 15, 17, 18, 19, 20, 21, 22, 23, 23, 24, 24, 25, 25, 26, 27, 27, 28, 28, 29, 29, 30, 31, DM_CHROMA_IDX };
 
-uint8_t g_convertToBit[MAX_CU_SIZE + 1];
+const uint8_t g_log2Size[MAX_CU_SIZE + 1] =
+{
+    0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+    5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+    6
+};
 
 // ====================================================================================================================
 // Scanning order & context model mapping
@@ -311,7 +303,6 @@ const uint16_t g_scan2x2[][2*2] =
 {
     { 0, 2, 1, 3 },
     { 0, 1, 2, 3 },
-    //{ 0, 2, 1, 3 },
 };
 
 const uint16_t g_scan8x8[NUM_SCAN_TYPE][8 * 8] =
@@ -496,5 +487,15 @@ const uint8_t x265_exp2_lut[64] =
     106,  110,  114,  118,  122,  126,  130,  135,  139,  143,  147,  152,  156,  161,  165,  170,
     175,  179,  184,  189,  194,  198,  203,  208,  214,  219,  224,  229,  234,  240,  245,  250
 };
+
+/* g_intraFilterFlags[dir] & trSize */
+const uint8_t g_intraFilterFlags[35] =
+{
+    0x38, 0x00,
+    0x38, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x20, 0x00, 0x20, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x38, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x20, 0x00, 0x20, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x38, 
+};
+
 }
 //! \}

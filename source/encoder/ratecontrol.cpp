@@ -573,7 +573,7 @@ bool RateControl::init(const SPS *sps)
                     return false;
                 }
 
-                if ((m_param->rc.cuTree || m_param->rc.vbvBufferSize) && ((p = strstr(opts, "rc-lookahead=")) != 0) && sscanf(p, "rc-lookahead=%d", &i))
+                if ((p = strstr(opts, "rc-lookahead=")) != 0 && sscanf(p, "rc-lookahead=%d", &i))
                     m_param->lookaheadDepth = i;
             }
             /* find number of pics */
@@ -1368,6 +1368,11 @@ double RateControl::rateEstimateQscale(Frame* pic, RateControlEntry *rce)
             q += m_pbOffset;
         rce->qpNoVbv = q;
         double qScale = x265_qp2qScale(q);
+        if (m_bframes > 5 && m_isVbv)
+        {
+            qScale = clipQscale(pic, qScale);
+            m_lastQScaleFor[m_sliceType] = qScale;
+        }
         rce->frameSizePlanned = predictSize(&m_predBfromP, qScale, (double)m_leadingNoBSatd);
         rce->frameSizeEstimated = rce->frameSizePlanned;
         rce->newQScale = qScale;
@@ -1462,7 +1467,7 @@ double RateControl::rateEstimateQscale(Frame* pic, RateControlEntry *rce)
             }
             else
             {
-                if (!m_param->rc.bStatWrite && !m_param->rc.bStatRead)
+                if (!m_param->rc.bStatRead)
                     checkAndResetABR(rce, false);
                 q = getQScale(rce, m_wantedBitsWindow / m_cplxrSum);
 
@@ -1652,11 +1657,15 @@ double RateControl::clipQscale(Frame* pic, double q)
             for (int iterations = 0; iterations < 1000 && loopTerminate != 3; iterations++)
             {
                 double frameQ[3];
-                double curBits = predictSize(&m_pred[m_sliceType], q, (double)m_currentSatd);
+                double curBits;
+                if (m_sliceType == B_SLICE)
+                    curBits = predictSize(&m_predBfromP, q, (double)m_currentSatd);
+                else
+                    curBits = predictSize(&m_pred[m_sliceType], q, (double)m_currentSatd);
                 double bufferFillCur = m_bufferFill - curBits;
                 double targetFill;
                 double totalDuration = 0;
-                frameQ[P_SLICE] = m_sliceType == I_SLICE ? q * m_param->rc.ipFactor : q;
+                frameQ[P_SLICE] = m_sliceType == I_SLICE ? q * m_param->rc.ipFactor : (m_sliceType == B_SLICE ? q / m_param->rc.pbFactor : q);
                 frameQ[B_SLICE] = frameQ[P_SLICE] * m_param->rc.pbFactor;
                 frameQ[I_SLICE] = frameQ[P_SLICE] / m_param->rc.ipFactor;
                 /* Loop over the planned future frames. */
@@ -1695,7 +1704,7 @@ double RateControl::clipQscale(Frame* pic, double q)
         else
         {
             /* Fallback to old purely-reactive algorithm: no lookahead. */
-            if ((m_sliceType == P_SLICE ||
+            if ((m_sliceType == P_SLICE || m_sliceType == B_SLICE ||
                     (m_sliceType == I_SLICE && m_lastNonBPictType == I_SLICE)) &&
                 m_bufferFill / m_bufferSize < 0.5)
             {
@@ -1726,25 +1735,6 @@ double RateControl::clipQscale(Frame* pic, double q)
             q = X265_MAX(q0, q);
         }
 
-        // Check B-frame complexity, and use up any bits that would
-        // overflow before the next P-frame.
-        if (m_sliceType == P_SLICE && !m_singleFrameVbv)
-        {
-            int nb = m_bframes;
-            double bits = predictSize(&m_pred[m_sliceType], q, (double)m_currentSatd);
-            double bbits = predictSize(&m_predBfromP, q * m_param->rc.pbFactor, (double)m_currentSatd);
-            double space;
-            if (bbits > m_bufferRate)
-                nb = 0;
-            double pbbits = nb * bbits;
-
-            space = m_bufferFill + (1 + nb) * m_bufferRate - m_bufferSize;
-            if (pbbits < space)
-            {
-                q *= X265_MAX(pbbits / space, bits / (0.5 * m_bufferSize));
-            }
-            q = X265_MAX(q0 / 2, q);
-        }
         if (!m_isCbr)
             q = X265_MAX(q0, q);
 
@@ -2046,7 +2036,7 @@ int RateControl::rateControlEnd(Frame* pic, int64_t bits, RateControlEntry* rce,
     Slice *slice = pic->m_picSym->m_slice;
     if (m_isAbr)
     {
-        if (m_param->rc.rateControlMode == X265_RC_ABR && !m_param->rc.bStatRead && !m_param->rc.bStatWrite)
+        if (m_param->rc.rateControlMode == X265_RC_ABR && !m_param->rc.bStatRead)
             checkAndResetABR(rce, true);
 
         if (m_param->rc.rateControlMode == X265_RC_CRF)
@@ -2094,7 +2084,7 @@ int RateControl::rateControlEnd(Frame* pic, int64_t bits, RateControlEntry* rce,
             : rce->sliceType == P_SLICE ? 'P'
             : IS_REFERENCED(slice) ? 'B' : 'b';
         if (fprintf(m_statFileOut,
-                    "in:%d out:%d type:%c dur:%.3f q:%.2f q-aq:%.2f tex:%d mv:%d misc:%d icu:%.2f pcu:%.2f scu:%.2f ",
+                    "in:%d out:%d type:%c dur:%.3f q:%.2f q-aq:%.2f tex:%d mv:%d misc:%d icu:%.2f pcu:%.2f scu:%.2f ;\n",
                     rce->poc, rce->encodeOrder,
                     cType, m_frameDuration,
                     pic->m_avgQpRc, pic->m_avgQpAq,
@@ -2104,8 +2094,6 @@ int RateControl::rateControlEnd(Frame* pic, int64_t bits, RateControlEntry* rce,
                     stats->cuCount_i * m_ncu,
                     stats->cuCount_p * m_ncu,
                     stats->cuCount_skip * m_ncu) < 0)
-            goto writeFailure;
-        if (fprintf(m_statFileOut, ";\n") < 0)
             goto writeFailure;
         /* Don't re-write the data in multi-pass mode. */
         if (m_param->rc.cuTree && IS_REFERENCED(slice) && !m_param->rc.bStatRead)

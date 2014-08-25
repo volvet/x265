@@ -117,6 +117,8 @@ static const struct option long_options[] =
     { "no-cu-lossless",       no_argument, NULL, 0 },
     { "no-constrained-intra", no_argument, NULL, 0 },
     { "constrained-intra",    no_argument, NULL, 0 },
+    { "fast-intra",           no_argument, NULL, 0 },
+    { "no-fast-intra",        no_argument, NULL, 0 },
     { "no-open-gop",          no_argument, NULL, 0 },
     { "open-gop",             no_argument, NULL, 0 },
     { "keyint",         required_argument, NULL, 'I' },
@@ -198,6 +200,8 @@ static const struct option long_options[] =
     { "nr",             required_argument, NULL, 0 },
     { "stats",          required_argument, NULL, 0 },
     { "pass",           required_argument, NULL, 0 },
+    { "slow-firstpass",       no_argument, NULL, 0 },
+    { "no-slow-firstpass",    no_argument, NULL, 0 },
     { 0, 0, 0, 0 }
 };
 
@@ -365,7 +369,7 @@ void CLIOptions::showHelp(x265_param *param)
     H0("\nAnalysis:\n");
     H0("   --rd <0..6>                   Level of RD in mode decision 0:least....6:full RDO. Default %d\n", param->rdLevel);
     H0("   --psy-rd <0..2.0>             Strength of psycho-visual rate distortion optimization, 0 to disable. Default %f\n", param->psyRd);
-    H0("   --psy-rdoq <0..2.0>           Strength of psycho-visual optimization in quantization, 0 to disable. Default %f\n", param->psyRdoq);
+    H0("   --psy-rdoq <0..10.0>          Strength of psycho-visual optimization in quantization, 0 to disable. Default %f\n", param->psyRdoq);
     H0("   --nr <integer>                An integer value in range of 100 to 1000, which denotes strength of noise reduction. Default disabled\n");
     H0("   --[no-]tskip-fast             Enable fast intra transform skipping. Default %s\n", OPT(param->bEnableTSkipFast));
     H0("   --[no-]early-skip             Enable early SKIP detection. Default %s\n", OPT(param->bEnableEarlySkip));
@@ -385,6 +389,7 @@ void CLIOptions::showHelp(x265_param *param)
     H0("   --[no-]strong-intra-smoothing Enable strong intra smoothing for 32x32 blocks. Default %s\n", OPT(param->bEnableStrongIntraSmoothing));
     H0("   --[no-]constrained-intra      Constrained intra prediction (use only intra coded reference pixels) Default %s\n", OPT(param->bEnableConstrainedIntra));
     H0("   --[no-]b-intra                Enable intra in B frames in veryslow presets. Default %s\n", OPT(param->bIntraInBFrames));
+    H0("   --[no-]fast-intra             Enable faster search method for angular intra predictions. Default %s\n", OPT(param->bEnableFastIntra));
     H0("   --rdpenalty <0..2>            penalty for 32x32 intra TU in non-I slices. 0:disabled 1:RD-penalty 2:maximum. Default %d\n", param->rdPenalty);
     H0("\nSlice decision options:\n");
     H0("   --[no-]open-gop               Enable open-GOP, allows I slices to be non-IDR. Default %s\n", OPT(param->bOpenGOP));
@@ -423,9 +428,10 @@ void CLIOptions::showHelp(x265_param *param)
     H0("   --crqpoffs <integer>          Chroma Cr QP Offset. Default %d\n", param->crQpOffset);
     H0("   --stats                       Filename for stats file in multipass pass rate control. Default x265_2pass.log\n");
     H0("   --pass                        Multi pass rate control.\n"
-       "                                   - 1 : First pass, cretes stats file\n"
+       "                                   - 1 : First pass, creates stats file\n"
        "                                   - 2 : Last pass, does not overwrite stats file\n"
        "                                   - 3 : Nth pass, overwrites stats file\n");
+    H0("   --[no-]slow-firstpass         Enable a slow first pass in a multipass rate control mode. Default %s\n", OPT(param->rc.bEnableSlowFirstPass));
     H0("   --scaling-list <string>       Specify a file containing HM style quant scaling lists or 'default' or 'off'. Default: off\n");
     H0("   --lambda-file <string>        Specify a file containing replacement values for the lambda tables\n");
     H0("                                 MAX_MAX_QP+1 floats for lambda table, then again for lambda2 table\n");
@@ -719,7 +725,6 @@ bool CLIOptions::parse(int argc, char **argv, x265_param* param)
         x265_log(NULL, X265_LOG_ERROR, "failed to open bitstream file <%s> for writing\n", bitstreamfn);
         return true;
     }
-
     return false;
 }
 
@@ -771,6 +776,7 @@ int main(int argc, char **argv)
     if (cliopt.parse(argc, argv, param))
     {
         cliopt.destroy();
+        x265_param_free(param);
         exit(1);
     }
 
@@ -779,6 +785,7 @@ int main(int argc, char **argv)
     {
         x265_log(param, X265_LOG_ERROR, "failed to open encoder\n");
         cliopt.destroy();
+        x265_param_free(param);
         x265_cleanup();
         exit(1);
     }

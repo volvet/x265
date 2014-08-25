@@ -21,21 +21,8 @@
  * For more information, contact us at license @ x265.com.
  *****************************************************************************/
 
-#include "TLibCommon/TComPrediction.h"
 #include "TLibCommon/TComRom.h"
 #include "primitives.h"
-
-namespace x265 {
-unsigned char IntraFilterType[][35] =
-{
-    //  Index:    0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34
-    /*  4x4  */ { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-    /*  8x8  */ { 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
-    /* 16x16 */ { 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1 },
-    /* 32x32 */ { 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1 },
-    /* 64x64 */ { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-};
-}
 
 using namespace x265;
 
@@ -261,11 +248,10 @@ template<int log2Size>
 void all_angs_pred_c(pixel *dest, pixel *above0, pixel *left0, pixel *above1, pixel *left1, int bLuma)
 {
     const int size = 1 << log2Size;
-    const int sizeIdx = log2Size - 2;
     for (int mode = 2; mode <= 34; mode++)
     {
-        pixel *left = (IntraFilterType[sizeIdx][mode] ? left1 : left0);
-        pixel *above = (IntraFilterType[sizeIdx][mode] ? above1 : above0);
+        pixel *left  = (g_intraFilterFlags[mode] & size ? left1  : left0);
+        pixel *above = (g_intraFilterFlags[mode] & size ? above1 : above0);
         pixel *out = dest + ((mode - 2) << (log2Size * 2));
 
         intra_pred_ang_c<size>(out, size, left, above, mode, bLuma);

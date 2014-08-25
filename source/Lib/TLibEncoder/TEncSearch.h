@@ -42,8 +42,8 @@
 #include "TLibCommon/TComYuv.h"
 #include "TLibCommon/TComMotionInfo.h"
 #include "TLibCommon/TComPattern.h"
-#include "TLibCommon/TComPrediction.h"
-#include "TLibCommon/TComTrQuant.h"
+#include "predict.h"
+#include "quant.h"
 #include "bitcost.h"
 #include "motion.h"
 
@@ -98,14 +98,14 @@ inline int getTUBits(int idx, int numIdx)
 // ====================================================================================================================
 
 /// encoder search class
-class TEncSearch : public TComPrediction
+class TEncSearch : public Predict
 {
 public:
 
-    MotionEstimate   m_me;
-    MotionReference (*m_mref)[MAX_NUM_REF + 1];
+    MotionEstimate  m_me;
 
     ShortYuv*       m_qtTempShortYuv;
+    TComYuv         m_predTempYuv;
 
     coeff_t*        m_qtTempCoeff[3][NUM_LAYERS];
     uint8_t*        m_qtTempTrIdx;
@@ -114,7 +114,7 @@ public:
     uint8_t*        m_qtTempTransformSkipFlag[3];
 
     // interface to classes
-    TComTrQuant     m_trQuant;
+    Quant           m_quant;
     RDCost          m_rdCost;
 
     Entropy*        m_entropyCoder;
@@ -125,8 +125,6 @@ public:
     bool            m_bEnableRDOQ;
     int             m_numLayers;
     int             m_refLagPixels;
-
-    void setQP(int qp, int qpCb, int qpCr);
 
     TEncSearch();
     virtual ~TEncSearch();
@@ -149,7 +147,7 @@ public:
 
     /// encode residual and compute rd-cost for inter mode
     void encodeResAndCalcRdInterCU(TComDataCU* cu, TComYuv* fencYuv, TComYuv* predYuv, ShortYuv* resiYuv, ShortYuv* bestResiYuv,
-                                   TComYuv* reconYuv, bool curUseRDOQ);
+                                   TComYuv* reconYuv);
     void encodeResAndCalcRdSkipCU(TComDataCU* cu, TComYuv* fencYuv, TComYuv* predYuv, TComYuv* reconYuv);
 
     void xRecurIntraCodingQT(TComDataCU* cu, uint32_t trDepth, uint32_t absPartIdx, TComYuv* fencYuv,
@@ -160,10 +158,10 @@ public:
     void generateCoeffRecon(TComDataCU* cu, TComYuv* fencYuv, TComYuv* predYuv, ShortYuv* resiYuv, TComYuv* reconYuv);
 
     void xEstimateResidualQT(TComDataCU* cu, uint32_t absPartIdx, TComYuv* fencYuv, TComYuv* predYuv, ShortYuv* resiYuv, uint32_t depth,
-                             uint64_t &rdCost, uint32_t &outBits, uint32_t &outDist, uint32_t *puiZeroDist, bool curUseRDOQ = true);
+                             uint64_t &rdCost, uint32_t &outBits, uint32_t &outDist, uint32_t *puiZeroDist);
     void xSetResidualQTData(TComDataCU* cu, uint32_t absPartIdx, ShortYuv* resiYuv, uint32_t depth, bool bSpatial);
 
-    void residualTransformQuantInter(TComDataCU* cu, uint32_t absPartIdx, ShortYuv* resiYuv, uint32_t depth, bool curUseRDOQ = true);
+    void residualTransformQuantInter(TComDataCU* cu, uint32_t absPartIdx, TComYuv* fencYuv, ShortYuv* resiYuv, uint32_t depth);
 
     // -------------------------------------------------------------------------------------------------------------------
     // compute symbol bits
@@ -173,6 +171,8 @@ public:
     void offsetSubTUCBFs(TComDataCU* cu, TextType ttype, uint32_t trDepth, uint32_t absPartIdx);
 
 protected:
+
+    static const pixel zeroPel[MAX_CU_SIZE];
 
     // --------------------------------------------------------------------------------------------
     // Intra search
@@ -216,7 +216,7 @@ protected:
     // Inter search (AMP)
     // --------------------------------------------------------------------------------------------
 
-    void xCheckBestMVP(AMVPInfo* amvpInfo, MV cMv, MV& mvPred, int& mvpIdx,
+    void xCheckBestMVP(MV* amvpCand, MV cMv, MV& mvPred, int& mvpIdx,
                        uint32_t& outBits, uint32_t& outCost);
 
     void xGetBlkBits(PartSize cuMode, bool bPSlice, int partIdx, uint32_t lastMode, uint32_t blockBit[3]);

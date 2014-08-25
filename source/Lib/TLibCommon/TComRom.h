@@ -43,17 +43,17 @@
 namespace x265 {
 // private namespace
 
-//! \ingroup TLibCommon
-//! \{
-
-// ====================================================================================================================
-// Macros
-// ====================================================================================================================
-
-#define MAX_CU_DEPTH            4                           // maximun CU depth
-#define MAX_FULL_DEPTH          5                           // maximun full depth
-#define MAX_LOG2_CU_SIZE        6                           // log2(LCUSize)
+#define NUM_CU_DEPTH            4                           // maximun number of CU depths
+#define NUM_FULL_DEPTH          5                           // maximun number of full depths
+#define MIN_LOG2_CU_SIZE        3                           // log2(minCUSize)
+#define MAX_LOG2_CU_SIZE        6                           // log2(maxCUSize)
+#define MIN_CU_SIZE             (1 << MIN_LOG2_CU_SIZE)     // minimum allowable size of CU
 #define MAX_CU_SIZE             (1 << MAX_LOG2_CU_SIZE)     // maximum allowable size of CU
+
+#define LOG2_UNIT_SIZE          2                           // log2(unitSize)
+#define UNIT_SIZE               (1 << LOG2_UNIT_SIZE)       // unit size of CU partition
+#define TMVP_UNIT_MASK          0xF0                        // mask for mapping index to CompressMV field
+
 #define MIN_PU_SIZE             4
 #define MIN_TU_SIZE             4
 #define MAX_NUM_SPU_W           (MAX_CU_SIZE / MIN_PU_SIZE) // maximum number of SPU in horizontal line
@@ -64,58 +64,43 @@ namespace x265 {
 #define MAX_TR_SIZE (1 << MAX_LOG2_TR_SIZE)
 #define MAX_TS_SIZE (1 << MAX_LOG2_TS_SIZE)
 
-// ====================================================================================================================
-// Initialize / destroy functions
-// ====================================================================================================================
+#define SLFASE_CONSTANT 0x5f4e4a53
 
 void initROM();
 void destroyROM();
 
-// ====================================================================================================================
 static const int chromaQPMappingTableSize = 70;
 
 extern const uint8_t g_chromaScale[chromaQPMappingTableSize];
 extern const uint8_t g_chroma422IntraAngleMappingTable[36];
-// Data structure related table & variable
-// ====================================================================================================================
 
 // flexible conversion from relative to absolute index
 extern uint32_t g_zscanToRaster[MAX_NUM_SPU_W * MAX_NUM_SPU_W];
 extern uint32_t g_rasterToZscan[MAX_NUM_SPU_W * MAX_NUM_SPU_W];
-void initZscanToRaster(int maxDepth, int depth, uint32_t startVal, uint32_t*& curIdx);
-void initRasterToZscan(uint32_t maxCUSize, uint32_t maxCUDepth);
+
+void initZscanToRaster(uint32_t maxFullDepth, uint32_t depth, uint32_t startVal, uint32_t*& curIdx);
+void initRasterToZscan(uint32_t maxFullDepth);
 
 // conversion of partition index to picture pel position
 extern uint32_t g_rasterToPelX[MAX_NUM_SPU_W * MAX_NUM_SPU_W];
 extern uint32_t g_rasterToPelY[MAX_NUM_SPU_W * MAX_NUM_SPU_W];
 
-void initRasterToPelXY(uint32_t maxCUSize, uint32_t maxCUDepth);
+void initRasterToPelXY(uint32_t maxFullDepth);
 
 // global variable (LCU width/height, max. CU depth)
 extern uint32_t g_maxLog2CUSize;
 extern uint32_t g_maxCUSize;
 extern uint32_t g_maxCUDepth;
-extern uint32_t g_addCUDepth;
-extern uint32_t g_log2UnitSize;
+extern uint32_t g_maxFullDepth;
 
 extern const uint32_t g_puOffset[8];
-
-#define QUANT_IQUANT_SHIFT    20 // Q(QP%6) * IQ(QP%6) = 2^20
-#define QUANT_SHIFT           14 // Q(4) = 2^14
-#define SCALE_BITS            15 // Inherited from TMuC, presumably for fractional bit estimates in RDOQ
-#define MAX_TR_DYNAMIC_RANGE  15 // Maximum transform dynamic range (excluding sign bit)
-
-#define SHIFT_INV_1ST          7 // Shift after first inverse transform stage
-#define SHIFT_INV_2ND         12 // Shift after second inverse transform stage
 
 extern const int16_t g_t4[4][4];
 extern const int16_t g_t8[8][8];
 extern const int16_t g_t16[16][16];
 extern const int16_t g_t32[32][32];
 
-// ====================================================================================================================
 // Subpel interpolation defines and constants
-// ====================================================================================================================
 
 #define NTAPS_LUMA        8                            ///< Number of taps for luma
 #define NTAPS_CHROMA      4                            ///< Number of taps for chroma
@@ -126,9 +111,24 @@ extern const int16_t g_t32[32][32];
 extern const int16_t g_lumaFilter[4][NTAPS_LUMA];     ///< Luma filter taps
 extern const int16_t g_chromaFilter[8][NTAPS_CHROMA]; ///< Chroma filter taps
 
-// ====================================================================================================================
 // Scanning order & context mapping table
-// ====================================================================================================================
+
+// coefficient scanning type used in ACS
+enum ScanType
+{
+    SCAN_DIAG = 0,     // up-right diagonal scan
+    SCAN_HOR = 1,      // horizontal first scan
+    SCAN_VER = 2,      // vertical first scan
+    NUM_SCAN_TYPE = 3
+};
+
+enum SignificanceMapContextType
+{
+    CONTEXT_TYPE_4x4 = 0,
+    CONTEXT_TYPE_8x8 = 1,
+    CONTEXT_TYPE_NxN = 2,
+    CONTEXT_NUMBER_OF_TYPES = 3
+};
 
 #define NUM_SCAN_SIZE 4
 
@@ -137,36 +137,10 @@ extern const uint16_t* const g_scanOrderCG[NUM_SCAN_TYPE][NUM_SCAN_SIZE];
 extern const uint16_t g_scan8x8diag[8 * 8];
 extern const uint16_t g_scan4x4[NUM_SCAN_TYPE][4 * 4];
 
-//extern const uint8_t g_groupIdx[32];
-static inline uint32_t getGroupIdx(const uint32_t idx)
-{
-    uint32_t group = (idx >> 3);
-
-    if (idx >= 24)
-        group = 2;
-    uint32_t groupIdx = ((idx >> (group + 1)) - 2) + 4 + (group << 1);
-    if (idx <= 3)
-        groupIdx = idx;
-
-#ifdef _DEBUG
-    static const uint8_t g_groupIdx[32]   = { 0, 1, 2, 3, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9 };
-    assert(groupIdx == g_groupIdx[idx]);
-#endif
-
-    return groupIdx;
-}
-
 extern const uint8_t g_minInGroup[10];
+extern const uint8_t g_goRiceRange[5]; // maximum value coded with Rice codes
 
-extern const uint8_t g_goRiceRange[5];      //!< maximum value coded with Rice codes
-//extern const uint8_t g_goRicePrefixLen[5];  //!< prefix length for each maximum value
-
-// ====================================================================================================================
-// Misc.
-// ====================================================================================================================
-
-extern uint8_t g_convertToBit[MAX_CU_SIZE + 1]; // from width to log2(width)-2
-
+extern const uint8_t g_log2Size[MAX_CU_SIZE + 1]; // from size to log2(size)
 
 // Map Luma samples to chroma samples
 extern const int g_winUnitX[MAX_CHROMA_FORMAT_IDC + 1];
@@ -179,6 +153,10 @@ extern const uint16_t x265_chroma_lambda2_offset_tab[MAX_CHROMA_LAMBDA_OFFSET+1]
 // CABAC tables
 extern const uint8_t g_lpsTable[64][4];
 extern const uint8_t x265_exp2_lut[64];
+
+// Intra tables
+extern const uint8_t g_intraFilterFlags[35];
+
 }
 
 #endif  //ifndef X265_TCOMROM_H

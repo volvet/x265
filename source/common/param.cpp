@@ -132,6 +132,7 @@ void x265_param_default(x265_param *param)
     /* Intra Coding Tools */
     param->bEnableConstrainedIntra = 0;
     param->bEnableStrongIntraSmoothing = 1;
+    param->bEnableFastIntra = 0;
 
     /* Inter Coding tools */
     param->searchMethod = X265_HEX_SEARCH;
@@ -191,6 +192,7 @@ void x265_param_default(x265_param *param)
     param->rc.statFileName = NULL;
     param->rc.complexityBlur = 20;
     param->rc.qblur = 0.5;
+    param->rc.bEnableSlowFirstPass = 0;
 
     /* Quality Measurement Metrics */
     param->bEnablePsnr = 0;
@@ -250,6 +252,7 @@ int x265_param_default_preset(x265_param *param, const char *preset, const char 
             param->rc.aqStrength = 0.0;
             param->rc.aqMode = X265_AQ_NONE;
             param->rc.cuTree = 0;
+            param->bEnableFastIntra = 1;
         }
         else if (!strcmp(preset, "superfast"))
         {
@@ -266,6 +269,7 @@ int x265_param_default_preset(x265_param *param, const char *preset, const char 
             param->rc.aqStrength = 0.0;
             param->rc.aqMode = X265_AQ_NONE;
             param->rc.cuTree = 0;
+            param->bEnableFastIntra = 1;
         }
         else if (!strcmp(preset, "veryfast"))
         {
@@ -278,6 +282,7 @@ int x265_param_default_preset(x265_param *param, const char *preset, const char 
             param->rdLevel = 2;
             param->maxNumReferences = 1;
             param->rc.cuTree = 0;
+            param->bEnableFastIntra = 1;
         }
         else if (!strcmp(preset, "faster"))
         {
@@ -288,6 +293,7 @@ int x265_param_default_preset(x265_param *param, const char *preset, const char 
             param->rdLevel = 2;
             param->maxNumReferences = 1;
             param->rc.cuTree = 0;
+            param->bEnableFastIntra = 1;
         }
         else if (!strcmp(preset, "fast"))
         {
@@ -295,6 +301,7 @@ int x265_param_default_preset(x265_param *param, const char *preset, const char 
             param->bFrameAdaptive = 0;
             param->rdLevel = 2;
             param->maxNumReferences = 2;
+            param->bEnableFastIntra = 1;
         }
         else if (!strcmp(preset, "medium"))
         {
@@ -351,6 +358,7 @@ int x265_param_default_preset(x265_param *param, const char *preset, const char 
             param->searchMethod = X265_STAR_SEARCH;
             param->bEnableTransformSkip = 1;
             param->maxNumReferences = 5;
+            param->rc.bEnableSlowFirstPass = 1;
             // TODO: optimized esa
         }
         else
@@ -558,6 +566,7 @@ int x265_param_parse(x265_param *p, const char *name, const char *value)
     OPT("lossless") p->bLossless = atobool(value);
     OPT("cu-lossless") p->bCULossless = atobool(value);
     OPT("constrained-intra") p->bEnableConstrainedIntra = atobool(value);
+    OPT("fast-intra") p->bEnableFastIntra = atobool(value);
     OPT("open-gop") p->bOpenGOP = atobool(value);
     OPT("scenecut")
     {
@@ -640,6 +649,7 @@ int x265_param_parse(x265_param *p, const char *name, const char *value)
     OPT("input-csp") p->internalCsp = parseName(value, x265_source_csp_names, bError);
     OPT("me")        p->searchMethod = parseName(value, x265_motion_est_names, bError);
     OPT("cutree")    p->rc.cuTree = atobool(value);
+    OPT("slow-firstpass") p->rc.bEnableSlowFirstPass = atobool(value);
     OPT("sar")
     {
         p->vui.aspectRatioIdc = parseName(value, x265_sar_names, bError);
@@ -858,13 +868,9 @@ int x265_check_params(x265_param *param)
     if (check_failed == 1)
         return check_failed;
 
-    uint32_t maxCUDepth = (uint32_t)g_convertToBit[param->maxCUSize];
-    uint32_t maxLog2CUSize = maxCUDepth + 2;
+    uint32_t maxLog2CUSize = (uint32_t)g_log2Size[param->maxCUSize];
     uint32_t tuQTMaxLog2Size = maxLog2CUSize - 1;
     uint32_t tuQTMinLog2Size = 2; //log2(4)
-
-    CHECK((param->maxCUSize >> maxCUDepth) < 4,
-          "Minimum partition width size should be larger than or equal to 8");
 
     /* These checks might be temporary */
 #if HIGH_BIT_DEPTH
@@ -942,7 +948,7 @@ int x265_check_params(x265_param *param)
     CHECK(param->rc.aqStrength < 0 || param->rc.aqStrength > 3,
           "Aq-Strength is out of range");
     CHECK(param->psyRd < 0 || 2.0 < param->psyRd, "Psy-rd strength must be between 0 and 2.0");
-    CHECK(param->psyRdoq < 0 || 2.0 < param->psyRdoq, "Psy-rdoq strength must be between 0 and 2.0");
+    CHECK(param->psyRdoq < 0 || 10.0 < param->psyRdoq, "Psy-rdoq strength must be between 0 and 10.0");
     CHECK(param->bEnableWavefront < 0, "WaveFrontSynchro cannot be negative");
     CHECK((param->vui.aspectRatioIdc < 0
            || param->vui.aspectRatioIdc > 16)
@@ -1020,11 +1026,25 @@ int x265_check_params(x265_param *param)
     return check_failed;
 }
 
+void x265_param_apply_fastfirstpass(x265_param* param)
+{
+    /* Set faster options in case of turbo firstpass */
+    if (param->rc.bStatWrite && !param->rc.bStatRead)
+    {
+        param->maxNumReferences = 1;
+        param->maxNumMergeCand = 1;
+        param->bEnableRectInter = 0;
+        param->bEnableFastIntra = 1;
+        param->bEnableAMP = 0;
+        param->searchMethod = X265_DIA_SEARCH;
+        param->subpelRefine = X265_MIN(2, param->subpelRefine);
+        param->bEnableEarlySkip = 1;
+        param->rdLevel = X265_MIN(2, param->rdLevel);
+    }
+}
+
 int x265_set_globals(x265_param *param)
 {
-    uint32_t maxCUDepth = (uint32_t)g_convertToBit[param->maxCUSize];
-    uint32_t tuQTMinLog2Size = 2; //log2(4)
-
     static int once /* = 0 */;
 
     if (ATOMIC_CAS32(&once, 0, 1) == 1)
@@ -1037,25 +1057,23 @@ int x265_set_globals(x265_param *param)
     }
     else
     {
+        uint32_t maxLog2CUSize = (uint32_t)g_log2Size[param->maxCUSize];
+
         // set max CU width & height
-        g_maxCUSize = param->maxCUSize;
-        g_maxLog2CUSize = maxCUDepth + 2;
+        g_maxCUSize     = param->maxCUSize;
+        g_maxLog2CUSize = maxLog2CUSize;
 
         // compute actual CU depth with respect to config depth and max transform size
-        g_addCUDepth = g_maxLog2CUSize - maxCUDepth - tuQTMinLog2Size;
-
-        maxCUDepth += g_addCUDepth;
-        g_addCUDepth++;
-        g_maxCUDepth = maxCUDepth;
-        g_log2UnitSize = g_maxLog2CUSize - g_maxCUDepth;
+        g_maxCUDepth   = maxLog2CUSize - MIN_LOG2_CU_SIZE;
+        g_maxFullDepth = maxLog2CUSize - LOG2_UNIT_SIZE;
 
         // initialize partition order
         uint32_t* tmp = &g_zscanToRaster[0];
-        initZscanToRaster(g_maxCUDepth + 1, 1, 0, tmp);
-        initRasterToZscan(g_maxCUSize, g_maxCUDepth + 1);
+        initZscanToRaster(g_maxFullDepth, 1, 0, tmp);
+        initRasterToZscan(g_maxFullDepth);
 
         // initialize conversion matrix from partition index to pel
-        initRasterToPelXY(g_maxCUSize, g_maxCUDepth + 1);
+        initRasterToPelXY(g_maxFullDepth);
     }
     return 0;
 }
@@ -1129,9 +1147,11 @@ void x265_print_params(x265_param *param)
     TOOLOPT(param->bEnableEarlySkip, "esd");
     fprintf(stderr, "rd=%d ", param->rdLevel);
     if (param->psyRd > 0.)
-        fprintf(stderr, "psy-rd=%.1lf ", param->psyRd);
+        fprintf(stderr, "psy-rd=%.2lf ", param->psyRd);
     if (param->psyRdoq > 0.)
-        fprintf(stderr, "psy-rdoq=%.1lf ", param->psyRdoq);
+        fprintf(stderr, "psy-rdoq=%.2lf ", param->psyRdoq);
+    if (param->noiseReduction)
+        fprintf(stderr, "nr=%d ", param->noiseReduction);
 
     TOOLOPT(param->bEnableLoopFilter, "lft");
     if (param->bEnableSAO)
@@ -1143,6 +1163,7 @@ void x265_print_params(x265_param *param)
     }
     TOOLOPT(param->bEnableSignHiding, "signhide");
     TOOLOPT(param->bCULossless, "cu-lossless");
+    TOOLOPT(param->bEnableFastIntra, "fast-intra");
     if (param->bEnableTransformSkip)
     {
         if (param->bEnableTSkipFast)
@@ -1189,6 +1210,7 @@ char *x265_param2string(x265_param *p)
     BOOL(p->bLossless, "lossless");
     BOOL(p->bCULossless, "cu-lossless");
     BOOL(p->bEnableConstrainedIntra, "constrained-intra");
+    BOOL(p->bEnableFastIntra, "fast-intra");
     BOOL(p->bOpenGOP, "open-gop");
     s += sprintf(s, " interlace=%d", p->interlaceMode);
     s += sprintf(s, " keyint=%d", p->keyframeMax);
@@ -1206,6 +1228,8 @@ char *x265_param2string(x265_param *p)
     s += sprintf(s, " cbqpoffs=%d", p->cbQpOffset);
     s += sprintf(s, " crqpoffs=%d", p->crQpOffset);
     s += sprintf(s, " rd=%d", p->rdLevel);
+    s += sprintf(s, " psy-rd=%.2f", p->psyRd);
+    s += sprintf(s, " psy-rdoq=%.2f", p->psyRdoq);
     BOOL(p->bEnableSignHiding, "signhide");
     BOOL(p->bEnableLoopFilter, "lft");
     BOOL(p->bEnableSAO, "sao");
