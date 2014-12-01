@@ -28,7 +28,6 @@
  *****************************************************************************/
 
 #include "common.h"
-#include "TLibCommon/TComRom.h"
 #include "primitives.h"
 
 using namespace x265;
@@ -42,7 +41,7 @@ namespace {
 
 // Fast DST Algorithm. Full matrix multiplication for DST and Fast DST algorithm
 // give identical results
-void fastForwardDst(int16_t *block, int16_t *coeff, int shift)  // input block, output coeff
+void fastForwardDst(const int16_t* block, int16_t* coeff, int shift)  // input block, output coeff
 {
     int c[4];
     int rnd_factor = 1 << (shift - 1);
@@ -62,7 +61,7 @@ void fastForwardDst(int16_t *block, int16_t *coeff, int shift)  // input block, 
     }
 }
 
-void inversedst(int16_t *tmp, int16_t *block, int shift)  // input tmp, output block
+void inversedst(const int16_t* tmp, int16_t* block, int shift)  // input tmp, output block
 {
     int i, c[4];
     int rnd_factor = 1 << (shift - 1);
@@ -82,7 +81,7 @@ void inversedst(int16_t *tmp, int16_t *block, int shift)  // input tmp, output b
     }
 }
 
-void partialButterfly16(int16_t *src, int16_t *dst, int shift, int line)
+void partialButterfly16(const int16_t* src, int16_t* dst, int shift, int line)
 {
     int j, k;
     int E[8], O[8];
@@ -135,7 +134,7 @@ void partialButterfly16(int16_t *src, int16_t *dst, int shift, int line)
     }
 }
 
-void partialButterfly32(int16_t *src, int16_t *dst, int shift, int line)
+void partialButterfly32(const int16_t* src, int16_t* dst, int shift, int line)
 {
     int j, k;
     int E[16], O[16];
@@ -204,7 +203,7 @@ void partialButterfly32(int16_t *src, int16_t *dst, int shift, int line)
     }
 }
 
-void partialButterfly8(int16_t *src, int16_t *dst, int shift, int line)
+void partialButterfly8(const int16_t* src, int16_t* dst, int shift, int line)
 {
     int j, k;
     int E[4], O[4];
@@ -241,7 +240,7 @@ void partialButterfly8(int16_t *src, int16_t *dst, int shift, int line)
     }
 }
 
-void partialButterflyInverse4(int16_t *src, int16_t *dst, int shift, int line)
+void partialButterflyInverse4(const int16_t* src, int16_t* dst, int shift, int line)
 {
     int j;
     int E[2], O[2];
@@ -266,7 +265,7 @@ void partialButterflyInverse4(int16_t *src, int16_t *dst, int shift, int line)
     }
 }
 
-void partialButterflyInverse8(int16_t *src, int16_t *dst, int shift, int line)
+void partialButterflyInverse8(const int16_t* src, int16_t* dst, int shift, int line)
 {
     int j, k;
     int E[4], O[4];
@@ -302,7 +301,7 @@ void partialButterflyInverse8(int16_t *src, int16_t *dst, int shift, int line)
     }
 }
 
-void partialButterflyInverse16(int16_t *src, int16_t *dst, int shift, int line)
+void partialButterflyInverse16(const int16_t* src, int16_t* dst, int shift, int line)
 {
     int j, k;
     int E[8], O[8];
@@ -353,7 +352,7 @@ void partialButterflyInverse16(int16_t *src, int16_t *dst, int shift, int line)
     }
 }
 
-void partialButterflyInverse32(int16_t *src, int16_t *dst, int shift, int line)
+void partialButterflyInverse32(const int16_t* src, int16_t* dst, int shift, int line)
 {
     int j, k;
     int E[16], O[16];
@@ -417,7 +416,7 @@ void partialButterflyInverse32(int16_t *src, int16_t *dst, int shift, int line)
     }
 }
 
-void partialButterfly4(int16_t *src, int16_t *dst, int shift, int line)
+void partialButterfly4(const int16_t* src, int16_t* dst, int shift, int line)
 {
     int j;
     int E[2], O[2];
@@ -441,7 +440,7 @@ void partialButterfly4(int16_t *src, int16_t *dst, int shift, int line)
     }
 }
 
-void dst4_c(int16_t *src, int32_t *dst, intptr_t stride)
+void dst4_c(const int16_t* src, int16_t* dst, intptr_t srcStride)
 {
     const int shift_1st = 1 + X265_DEPTH - 8;
     const int shift_2nd = 8;
@@ -451,25 +450,14 @@ void dst4_c(int16_t *src, int32_t *dst, intptr_t stride)
 
     for (int i = 0; i < 4; i++)
     {
-        memcpy(&block[i * 4], &src[i * stride], 4 * sizeof(int16_t));
+        memcpy(&block[i * 4], &src[i * srcStride], 4 * sizeof(int16_t));
     }
 
     fastForwardDst(block, coef, shift_1st);
-    fastForwardDst(coef, block, shift_2nd);
-
-#define N (4)
-    for (int i = 0; i < N; i++)
-    {
-        for (int j = 0; j < N; j++)
-        {
-            dst[i * N + j] = block[i * N + j];
-        }
-    }
-
-#undef N
+    fastForwardDst(coef, dst, shift_2nd);
 }
 
-void dct4_c(int16_t *src, int32_t *dst, intptr_t stride)
+void dct4_c(const int16_t* src, int16_t* dst, intptr_t srcStride)
 {
     const int shift_1st = 1 + X265_DEPTH - 8;
     const int shift_2nd = 8;
@@ -479,24 +467,14 @@ void dct4_c(int16_t *src, int32_t *dst, intptr_t stride)
 
     for (int i = 0; i < 4; i++)
     {
-        memcpy(&block[i * 4], &src[i * stride], 4 * sizeof(int16_t));
+        memcpy(&block[i * 4], &src[i * srcStride], 4 * sizeof(int16_t));
     }
 
     partialButterfly4(block, coef, shift_1st, 4);
-    partialButterfly4(coef, block, shift_2nd, 4);
-#define N (4)
-    for (int i = 0; i < N; i++)
-    {
-        for (int j = 0; j < N; j++)
-        {
-            dst[i * N + j] = block[i * N + j];
-        }
-    }
-
-#undef N
+    partialButterfly4(coef, dst, shift_2nd, 4);
 }
 
-void dct8_c(int16_t *src, int32_t *dst, intptr_t stride)
+void dct8_c(const int16_t* src, int16_t* dst, intptr_t srcStride)
 {
     const int shift_1st = 2 + X265_DEPTH - 8;
     const int shift_2nd = 9;
@@ -506,25 +484,14 @@ void dct8_c(int16_t *src, int32_t *dst, intptr_t stride)
 
     for (int i = 0; i < 8; i++)
     {
-        memcpy(&block[i * 8], &src[i * stride], 8 * sizeof(int16_t));
+        memcpy(&block[i * 8], &src[i * srcStride], 8 * sizeof(int16_t));
     }
 
     partialButterfly8(block, coef, shift_1st, 8);
-    partialButterfly8(coef, block, shift_2nd, 8);
-
-#define N (8)
-    for (int i = 0; i < N; i++)
-    {
-        for (int j = 0; j < N; j++)
-        {
-            dst[i * N + j] = block[i * N + j];
-        }
-    }
-
-#undef N
+    partialButterfly8(coef, dst, shift_2nd, 8);
 }
 
-void dct16_c(int16_t *src, int32_t *dst, intptr_t stride)
+void dct16_c(const int16_t* src, int16_t* dst, intptr_t srcStride)
 {
     const int shift_1st = 3 + X265_DEPTH - 8;
     const int shift_2nd = 10;
@@ -534,25 +501,14 @@ void dct16_c(int16_t *src, int32_t *dst, intptr_t stride)
 
     for (int i = 0; i < 16; i++)
     {
-        memcpy(&block[i * 16], &src[i * stride], 16 * sizeof(int16_t));
+        memcpy(&block[i * 16], &src[i * srcStride], 16 * sizeof(int16_t));
     }
 
     partialButterfly16(block, coef, shift_1st, 16);
-    partialButterfly16(coef, block, shift_2nd, 16);
-
-#define N (16)
-    for (int i = 0; i < N; i++)
-    {
-        for (int j = 0; j < N; j++)
-        {
-            dst[i * N + j] = block[i * N + j];
-        }
-    }
-
-#undef N
+    partialButterfly16(coef, dst, shift_2nd, 16);
 }
 
-void dct32_c(int16_t *src, int32_t *dst, intptr_t stride)
+void dct32_c(const int16_t* src, int16_t* dst, intptr_t srcStride)
 {
     const int shift_1st = 4 + X265_DEPTH - 8;
     const int shift_2nd = 11;
@@ -562,25 +518,14 @@ void dct32_c(int16_t *src, int32_t *dst, intptr_t stride)
 
     for (int i = 0; i < 32; i++)
     {
-        memcpy(&block[i * 32], &src[i * stride], 32 * sizeof(int16_t));
+        memcpy(&block[i * 32], &src[i * srcStride], 32 * sizeof(int16_t));
     }
 
     partialButterfly32(block, coef, shift_1st, 32);
-    partialButterfly32(coef, block, shift_2nd, 32);
-
-#define N (32)
-    for (int i = 0; i < N; i++)
-    {
-        for (int j = 0; j < N; j++)
-        {
-            dst[i * N + j] = block[i * N + j];
-        }
-    }
-
-#undef N
+    partialButterfly32(coef, dst, shift_2nd, 32);
 }
 
-void idst4_c(int32_t *src, int16_t *dst, intptr_t stride)
+void idst4_c(const int16_t* src, int16_t* dst, intptr_t dstStride)
 {
     const int shift_1st = 7;
     const int shift_2nd = 12 - (X265_DEPTH - 8);
@@ -588,27 +533,16 @@ void idst4_c(int32_t *src, int16_t *dst, intptr_t stride)
     ALIGN_VAR_32(int16_t, coef[4 * 4]);
     ALIGN_VAR_32(int16_t, block[4 * 4]);
 
-#define N (4)
-    for (int i = 0; i < N; i++)
-    {
-        for (int j = 0; j < N; j++)
-        {
-            block[i * N + j] = (int16_t)src[i * N + j];
-        }
-    }
-
-#undef N
-
-    inversedst(block, coef, shift_1st); // Forward DST BY FAST ALGORITHM, block input, coef output
+    inversedst(src, coef, shift_1st); // Forward DST BY FAST ALGORITHM, block input, coef output
     inversedst(coef, block, shift_2nd); // Forward DST BY FAST ALGORITHM, coef input, coeff output
 
     for (int i = 0; i < 4; i++)
     {
-        memcpy(&dst[i * stride], &block[i * 4], 4 * sizeof(int16_t));
+        memcpy(&dst[i * dstStride], &block[i * 4], 4 * sizeof(int16_t));
     }
 }
 
-void idct4_c(int32_t *src, int16_t *dst, intptr_t stride)
+void idct4_c(const int16_t* src, int16_t* dst, intptr_t dstStride)
 {
     const int shift_1st = 7;
     const int shift_2nd = 12 - (X265_DEPTH - 8);
@@ -616,27 +550,16 @@ void idct4_c(int32_t *src, int16_t *dst, intptr_t stride)
     ALIGN_VAR_32(int16_t, coef[4 * 4]);
     ALIGN_VAR_32(int16_t, block[4 * 4]);
 
-#define N (4)
-    for (int i = 0; i < N; i++)
-    {
-        for (int j = 0; j < N; j++)
-        {
-            block[i * N + j] = (int16_t)src[i * N + j];
-        }
-    }
-
-#undef N
-
-    partialButterflyInverse4(block, coef, shift_1st, 4); // Forward DST BY FAST ALGORITHM, block input, coef output
+    partialButterflyInverse4(src, coef, shift_1st, 4); // Forward DST BY FAST ALGORITHM, block input, coef output
     partialButterflyInverse4(coef, block, shift_2nd, 4); // Forward DST BY FAST ALGORITHM, coef input, coeff output
 
     for (int i = 0; i < 4; i++)
     {
-        memcpy(&dst[i * stride], &block[i * 4], 4 * sizeof(int16_t));
+        memcpy(&dst[i * dstStride], &block[i * 4], 4 * sizeof(int16_t));
     }
 }
 
-void idct8_c(int32_t *src, int16_t *dst, intptr_t stride)
+void idct8_c(const int16_t* src, int16_t* dst, intptr_t dstStride)
 {
     const int shift_1st = 7;
     const int shift_2nd = 12 - (X265_DEPTH - 8);
@@ -644,26 +567,16 @@ void idct8_c(int32_t *src, int16_t *dst, intptr_t stride)
     ALIGN_VAR_32(int16_t, coef[8 * 8]);
     ALIGN_VAR_32(int16_t, block[8 * 8]);
 
-#define N (8)
-    for (int i = 0; i < N; i++)
-    {
-        for (int j = 0; j < N; j++)
-        {
-            block[i * N + j] = (int16_t)src[i * N + j];
-        }
-    }
-
-#undef N
-
-    partialButterflyInverse8(block, coef, shift_1st, 8);
+    partialButterflyInverse8(src, coef, shift_1st, 8);
     partialButterflyInverse8(coef, block, shift_2nd, 8);
+
     for (int i = 0; i < 8; i++)
     {
-        memcpy(&dst[i * stride], &block[i * 8], 8 * sizeof(int16_t));
+        memcpy(&dst[i * dstStride], &block[i * 8], 8 * sizeof(int16_t));
     }
 }
 
-void idct16_c(int32_t *src, int16_t *dst, intptr_t stride)
+void idct16_c(const int16_t* src, int16_t* dst, intptr_t dstStride)
 {
     const int shift_1st = 7;
     const int shift_2nd = 12 - (X265_DEPTH - 8);
@@ -671,26 +584,16 @@ void idct16_c(int32_t *src, int16_t *dst, intptr_t stride)
     ALIGN_VAR_32(int16_t, coef[16 * 16]);
     ALIGN_VAR_32(int16_t, block[16 * 16]);
 
-#define N (16)
-    for (int i = 0; i < N; i++)
-    {
-        for (int j = 0; j < N; j++)
-        {
-            block[i * N + j] = (int16_t)src[i * N + j];
-        }
-    }
-
-#undef N
-
-    partialButterflyInverse16(block, coef, shift_1st, 16);
+    partialButterflyInverse16(src, coef, shift_1st, 16);
     partialButterflyInverse16(coef, block, shift_2nd, 16);
+
     for (int i = 0; i < 16; i++)
     {
-        memcpy(&dst[i * stride], &block[i * 16], 16 * sizeof(int16_t));
+        memcpy(&dst[i * dstStride], &block[i * 16], 16 * sizeof(int16_t));
     }
 }
 
-void idct32_c(int32_t *src, int16_t *dst, intptr_t stride)
+void idct32_c(const int16_t* src, int16_t* dst, intptr_t dstStride)
 {
     const int shift_1st = 7;
     const int shift_2nd = 12 - (X265_DEPTH - 8);
@@ -698,56 +601,44 @@ void idct32_c(int32_t *src, int16_t *dst, intptr_t stride)
     ALIGN_VAR_32(int16_t, coef[32 * 32]);
     ALIGN_VAR_32(int16_t, block[32 * 32]);
 
-#define N (32)
-    for (int i = 0; i < N; i++)
-    {
-        for (int j = 0; j < N; j++)
-        {
-            block[i * N + j] = (int16_t)src[i * N + j];
-        }
-    }
-
-#undef N
-
-    partialButterflyInverse32(block, coef, shift_1st, 32);
+    partialButterflyInverse32(src, coef, shift_1st, 32);
     partialButterflyInverse32(coef, block, shift_2nd, 32);
 
     for (int i = 0; i < 32; i++)
     {
-        memcpy(&dst[i * stride], &block[i * 32], 32 * sizeof(int16_t));
+        memcpy(&dst[i * dstStride], &block[i * 32], 32 * sizeof(int16_t));
     }
 }
 
-void dequant_normal_c(const int32_t* quantCoef, int32_t* coef, int num, int scale, int shift)
+void dequant_normal_c(const int16_t* quantCoef, int16_t* coef, int num, int scale, int shift)
 {
-#if !HIGH_BIT_DEPTH
+#if HIGH_BIT_DEPTH
+    X265_CHECK(scale < 32768 || ((scale & 3) == 0 && shift > 2), "dequant invalid scale %d\n", scale);
+#else
     // NOTE: maximum of scale is (72 * 256)
     X265_CHECK(scale < 32768, "dequant invalid scale %d\n", scale);
 #endif
     X265_CHECK(num <= 32 * 32, "dequant num %d too large\n", num);
     X265_CHECK((num % 8) == 0, "dequant num %d not multiple of 8\n", num);
     X265_CHECK(shift <= 10, "shift too large %d\n", shift);
+    X265_CHECK(((intptr_t)coef & 31) == 0, "dequant coef buffer not aligned\n");
 
     int add, coeffQ;
-
-    int clipQCoef;
 
     add = 1 << (shift - 1);
 
     for (int n = 0; n < num; n++)
     {
-        clipQCoef = Clip3(-32768, 32767, quantCoef[n]);
-        coeffQ = (clipQCoef * scale + add) >> shift;
-        coef[n] = Clip3(-32768, 32767, coeffQ);
+        coeffQ = (quantCoef[n] * scale + add) >> shift;
+        coef[n] = (int16_t)Clip3(-32768, 32767, coeffQ);
     }
 }
 
-void dequant_scaling_c(const int32_t* quantCoef, const int32_t *deQuantCoef, int32_t* coef, int num, int per, int shift)
+void dequant_scaling_c(const int16_t* quantCoef, const int32_t* deQuantCoef, int16_t* coef, int num, int per, int shift)
 {
     X265_CHECK(num <= 32 * 32, "dequant num %d too large\n", num);
 
     int add, coeffQ;
-    int clipQCoef;
 
     shift += 4;
 
@@ -757,24 +648,24 @@ void dequant_scaling_c(const int32_t* quantCoef, const int32_t *deQuantCoef, int
 
         for (int n = 0; n < num; n++)
         {
-            clipQCoef = Clip3(-32768, 32767, quantCoef[n]);
-            coeffQ = ((clipQCoef * deQuantCoef[n]) + add) >> (shift - per);
-            coef[n] = Clip3(-32768, 32767, coeffQ);
+            coeffQ = ((quantCoef[n] * deQuantCoef[n]) + add) >> (shift - per);
+            coef[n] = (int16_t)Clip3(-32768, 32767, coeffQ);
         }
     }
     else
     {
         for (int n = 0; n < num; n++)
         {
-            clipQCoef = Clip3(-32768, 32767, quantCoef[n]);
-            coeffQ   = Clip3(-32768, 32767, clipQCoef * deQuantCoef[n]);
-            coef[n] = Clip3(-32768, 32767, coeffQ << (per - shift));
+            coeffQ   = Clip3(-32768, 32767, quantCoef[n] * deQuantCoef[n]);
+            coef[n] = (int16_t)Clip3(-32768, 32767, coeffQ << (per - shift));
         }
     }
 }
 
-uint32_t quant_c(int32_t* coef, int32_t* quantCoeff, int32_t* deltaU, int32_t* qCoef, int qBits, int add, int numCoeff)
+uint32_t quant_c(const int16_t* coef, const int32_t* quantCoeff, int32_t* deltaU, int16_t* qCoef, int qBits, int add, int numCoeff)
 {
+    X265_CHECK(qBits >= 8, "qBits less than 8\n");
+    X265_CHECK((numCoeff % 16) == 0, "numCoeff must be multiple of 16\n");
     int qBits8 = qBits - 8;
     uint32_t numSig = 0;
 
@@ -789,14 +680,18 @@ uint32_t quant_c(int32_t* coef, int32_t* quantCoeff, int32_t* deltaU, int32_t* q
         if (level)
             ++numSig;
         level *= sign;
-        qCoef[blockpos] = Clip3(-32768, 32767, level);
+        qCoef[blockpos] = (int16_t)Clip3(-32768, 32767, level);
     }
 
     return numSig;
 }
 
-uint32_t nquant_c(int32_t* coef, int32_t* quantCoeff, int32_t* qCoef, int qBits, int add, int numCoeff)
+uint32_t nquant_c(const int16_t* coef, const int32_t* quantCoeff, int16_t* qCoef, int qBits, int add, int numCoeff)
 {
+    X265_CHECK((numCoeff % 16) == 0, "number of quant coeff is not multiple of 4x4\n");
+    X265_CHECK((uint32_t)add < ((uint32_t)1 << qBits), "2 ^ qBits less than add\n");
+    X265_CHECK(((intptr_t)quantCoeff & 31) == 0, "quantCoeff buffer not aligned\n");
+
     uint32_t numSig = 0;
 
     for (int blockpos = 0; blockpos < numCoeff; blockpos++)
@@ -809,13 +704,13 @@ uint32_t nquant_c(int32_t* coef, int32_t* quantCoeff, int32_t* qCoef, int qBits,
         if (level)
             ++numSig;
         level *= sign;
-        qCoef[blockpos] = Clip3(-32768, 32767, level);
+        qCoef[blockpos] = (int16_t)Clip3(-32768, 32767, level);
     }
 
     return numSig;
 }
 
-int  count_nonzero_c(const int32_t *quantCoeff, int numCoeff)
+int  count_nonzero_c(const int16_t* quantCoeff, int numCoeff)
 {
     X265_CHECK(((intptr_t)quantCoeff & 15) == 0, "quant buffer not aligned\n");
     X265_CHECK(numCoeff > 0 && (numCoeff & 15) == 0, "numCoeff invalid %d\n", numCoeff);
@@ -831,22 +726,22 @@ int  count_nonzero_c(const int32_t *quantCoeff, int numCoeff)
 }
 
 template<int trSize>
-uint32_t conv16to32_count(coeff_t* coeff, int16_t* residual, intptr_t stride)
+uint32_t copy_count(int16_t* coeff, const int16_t* residual, intptr_t resiStride)
 {
     uint32_t numSig = 0;
     for (int k = 0; k < trSize; k++)
     {
         for (int j = 0; j < trSize; j++)
         {
-            coeff[k * trSize + j] = ((int16_t)residual[k * stride + j]);
-            numSig += (residual[k * stride + j] != 0);
+            coeff[k * trSize + j] = residual[k * resiStride + j];
+            numSig += (residual[k * resiStride + j] != 0);
         }
     }
 
     return numSig;
 }
 
-void denoiseDct_c(coeff_t* dctCoef, uint32_t* resSum, uint16_t* offset, int numCoeff)
+void denoiseDct_c(int16_t* dctCoef, uint32_t* resSum, const uint16_t* offset, int numCoeff)
 {
     for (int i = 0; i < numCoeff; i++)
     {
@@ -855,7 +750,7 @@ void denoiseDct_c(coeff_t* dctCoef, uint32_t* resSum, uint16_t* offset, int numC
         level = (level + sign) ^ sign;
         resSum[i] += level;
         level -= offset[i];
-        dctCoef[i] = level < 0 ? 0 : (level ^ sign) - sign;
+        dctCoef[i] = (int16_t)(level < 0 ? 0 : (level ^ sign) - sign);
     }
 }
 
@@ -883,9 +778,9 @@ void Setup_C_DCTPrimitives(EncoderPrimitives& p)
     p.count_nonzero = count_nonzero_c;
     p.denoiseDct = denoiseDct_c;
 
-    p.cvt16to32_cnt[BLOCK_4x4] = conv16to32_count<4>;
-    p.cvt16to32_cnt[BLOCK_8x8] = conv16to32_count<8>;
-    p.cvt16to32_cnt[BLOCK_16x16] = conv16to32_count<16>;
-    p.cvt16to32_cnt[BLOCK_32x32] = conv16to32_count<32>;
+    p.copy_cnt[BLOCK_4x4] = copy_count<4>;
+    p.copy_cnt[BLOCK_8x8] = copy_count<8>;
+    p.copy_cnt[BLOCK_16x16] = copy_count<16>;
+    p.copy_cnt[BLOCK_32x32] = copy_count<32>;
 }
 }

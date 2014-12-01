@@ -36,7 +36,7 @@ enum SAOTypeLen
 {
     SAO_EO_LEN = 4,
     SAO_BO_LEN = 4,
-    SAO_MAX_BO_CLASSES = 32
+    SAO_NUM_BO_CLASSES = 32
 };
 
 enum SAOType
@@ -55,55 +55,38 @@ protected:
 
     enum { SAO_MAX_DEPTH = 4 };
     enum { SAO_BO_BITS  = 5 };
-    enum { LUMA_GROUP_NUM = 1 << SAO_BO_BITS };
-    enum { MAX_NUM_SAO_OFFSETS = 4 };
     enum { MAX_NUM_SAO_CLASS = 33 };
     enum { SAO_BIT_INC = X265_MAX(X265_DEPTH - 10, 0) };
     enum { OFFSET_THRESH = 1 << X265_MIN(X265_DEPTH - 5, 5) };
+    enum { NUM_EDGETYPE = 5 };
+    enum { NUM_PLANE = 3 };
+    enum { NUM_MERGE_MODE = 3 };
 
-    static const int      s_numCulPartsLevel[5];
-    static const int      s_numClass[MAX_NUM_SAO_TYPE];
-    static const uint32_t s_eoTable[9];
+    static const uint32_t s_eoTable[NUM_EDGETYPE];
 
-    typedef int64_t (PerClass[MAX_NUM_SAO_TYPE][MAX_NUM_SAO_CLASS]);
-    typedef int64_t (PerType[MAX_NUM_SAO_TYPE]);
-    typedef double  (PerTypeD[MAX_NUM_SAO_TYPE]);
-    typedef int64_t (PerPlane[3][MAX_NUM_SAO_TYPE][MAX_NUM_SAO_CLASS]);
+    typedef int32_t (PerClass[MAX_NUM_SAO_TYPE][MAX_NUM_SAO_CLASS]);
+    typedef int32_t (PerPlane[NUM_PLANE][MAX_NUM_SAO_TYPE][MAX_NUM_SAO_CLASS]);
 
     /* allocated per part */
     PerClass*   m_count;
     PerClass*   m_offset;
     PerClass*   m_offsetOrg;
-    PerType*    m_rate;
-    PerType*    m_dist;
-    PerTypeD*   m_cost;
-    double*     m_costPartBest;
-    int64_t*    m_distOrg;
-    int*        m_typePartBest;
 
-    /* allocated per LCU */
+    /* allocated per CTU */
     PerPlane*   m_countPreDblk;
     PerPlane*   m_offsetOrgPreDblk;
 
     double      m_depthSaoRate[2][4];
-    int32_t*    m_offsetBo;
-    int32_t*    m_chromaOffsetBo;
-    int8_t      m_offsetEo[LUMA_GROUP_NUM];
-
-    Entropy     m_rdEntropyCoders[5][CI_NUM_SAO];
-    Entropy*    m_entropyCoder;
-
-    int         m_maxSplitLevel;
+    pixel*      m_offsetBo;
+    int8_t      m_offsetEo[NUM_EDGETYPE];
 
     int         m_numCuInWidth;
     int         m_numCuInHeight;
-    int         m_numTotalParts;
     int         m_hChromaShift;
     int         m_vChromaShift;
 
     pixel*      m_clipTable;
     pixel*      m_clipTableBase;
-    pixel*      m_tableBo;
 
     pixel*      m_tmpU1[3];
     pixel*      m_tmpU2[3];
@@ -112,69 +95,56 @@ protected:
 
 public:
 
-    Frame*      m_pic;
+    struct SAOContexts
+    {
+        Entropy cur;
+        Entropy next;
+        Entropy temp;
+    };
+
+    Frame*      m_frame;
+    Entropy     m_entropyCoder;
+    SAOContexts m_rdContexts;
+
     x265_param* m_param;
     int         m_refDepth;
     int         m_numNoSao[2];
-    
-    uint32_t    m_qp;
+
     double      m_lumaLambda;
     double      m_chromaLambda;
     /* TODO: No doubles for distortion */
 
     SAO();
 
-    bool create(x265_param *param);
+    bool create(x265_param* param);
     void destroy();
 
-    void initSAOParam(SAOParam* saoParam, int partLevel, int partRow, int partCol, int parentPartIdx, int startCUX, int endCUX, int startCUY, int endCUY, int plane) const;
     void allocSaoParam(SAOParam* saoParam) const;
-    void resetSAOParam(SAOParam* saoParam);
 
-    void SAOProcess(SAOParam* saoParam);
-
-    // LCU-basd SAO process without slice granularity
-    void processSaoCu(int addr, int partIdx, int plane);
-
-    void resetLcuPart(SaoLcuParam* saoLcuParam);
-    void convertQT2SaoUnit(SAOParam* saoParam, uint32_t partIdx, int plane);
-    void convertOnePart2SaoUnit(SAOParam *saoParam, uint32_t partIdx, int plane);
-    void processSaoUnitAll(SaoLcuParam* saoLcuParam, bool oneUnitFlag, int plane);
-    void processSaoUnitRow(SaoLcuParam* saoLcuParam, int idxY, int plane);
-
-    void resetSaoUnit(SaoLcuParam* saoUnit);
-    void copySaoUnit(SaoLcuParam* saoUnitDst, SaoLcuParam* saoUnitSrc);
-
-    void startSaoEnc(Frame* pic, Entropy* entropyCoder);
-
+    void startSlice(Frame* pic, Entropy& initState, int qp);
     void resetStats();
+    void resetSaoUnit(SaoCtuParam* saoUnit);
 
-    void runQuadTreeDecision(SAOQTPart *psQTPart, int partIdx, double &costFinal, int maxLevel, double lambda, int plane);
-    void rdoSaoOnePart(SAOQTPart *psQTPart, int partIdx, double lambda, int plane);
+    // CTU-based SAO process without slice granularity
+    void processSaoCu(int addr, int typeIdx, int plane);
+    void processSaoUnitRow(SaoCtuParam* ctuParam, int idxY, int plane);
 
-    void disablePartTree(SAOQTPart *psQTPart, int partIdx);
-    void getSaoStats(SAOQTPart *psQTPart, int plane);
-    void calcSaoStatsCu(int addr, int partIdx, int plane);
+    void copySaoUnit(SaoCtuParam* saoUnitDst, const SaoCtuParam* saoUnitSrc);
+
+    void calcSaoStatsCu(int addr, int plane);
     void calcSaoStatsCu_BeforeDblk(Frame* pic, int idxX, int idxY);
-    void assignSaoUnitSyntax(SaoLcuParam* saoLcuParam,  SAOQTPart* saoPart, bool &oneUnitFlag);
-    void checkMerge(SaoLcuParam* lcuParamCurr, SaoLcuParam * lcuParamCheck, int dir);
-    void saoComponentParamDist(int allowMergeLeft, int allowMergeUp, SAOParam *saoParam, int addr, int addrUp, int addrLeft, int plane,
-                               double lambda, SaoLcuParam *compSaoParam, double *distortion);
-    void sao2ChromaParamDist(int allowMergeLeft, int allowMergeUp, SAOParam *saoParam, int addr, int addrUp, int addrLeft, double lambda,
-                            SaoLcuParam *crSaoParam, SaoLcuParam *cbSaoParam, double *distortion);
 
-    inline int64_t estSaoDist(int64_t count, int64_t offset, int64_t offsetOrg, int shift);
-    inline int64_t estIterOffset(int typeIdx, int classIdx, double lambda, int64_t offsetInput, int64_t count, int64_t offsetOrg, int shift,
-                                 int bitIncrease, int32_t *currentDistortionTableBo, double *currentRdCostTableBo, int offsetTh);
-    inline int64_t estSaoTypeDist(int compIdx, int typeIdx, int shift, double lambda, int32_t *currentDistortionTableBo, double *currentRdCostTableBo);
+    void saoComponentParamDist(SAOParam* saoParam, int addr, int addrUp, int addrLeft, SaoCtuParam mergeSaoParam[2], double* mergeDist);
+    void sao2ChromaParamDist(SAOParam* saoParam, int addr, int addrUp, int addrLeft, SaoCtuParam mergeSaoParam[][2], double* mergeDist);
 
-    void rdoSaoUnitRowInit(SAOParam *saoParam);
-    void rdoSaoUnitRowEnd(SAOParam *saoParam, int numlcus);
-    void rdoSaoUnitRow(SAOParam *saoParam, int idxY);
+    inline int estIterOffset(int typeIdx, int classIdx, double lambda, int offset, int32_t count, int32_t offsetOrg,
+                             int32_t* currentDistortionTableBo, double* currentRdCostTableBo);
+    inline int64_t estSaoTypeDist(int plane, int typeIdx, double lambda, int32_t* currentDistortionTableBo, double* currentRdCostTableBo);
+
+    void rdoSaoUnitRowInit(SAOParam* saoParam);
+    void rdoSaoUnitRowEnd(const SAOParam* saoParam, int numctus);
+    void rdoSaoUnitRow(SAOParam* saoParam, int idxY);
 };
-
-void restoreLFDisabledOrigYuv(Frame* pic);
-void origCUSampleRestoration(TComDataCU* cu, uint32_t absZOrderIdx, uint32_t depth);
 
 }
 

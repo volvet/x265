@@ -22,11 +22,14 @@
  *****************************************************************************/
 
 #include "common.h"
+#include "bitstream.h"
 #include "param.h"
+
 #include "encoder.h"
-#include "frameencoder.h"
+#include "entropy.h"
 #include "level.h"
 #include "nal.h"
+#include "bitcost.h"
 
 using namespace x265;
 
@@ -53,27 +56,26 @@ x265_encoder *x265_encoder_open(x265_param *p)
         return NULL;
 
     Encoder *encoder = new Encoder;
-    if (encoder)
+    if (!param->rc.bEnableSlowFirstPass)
+        x265_param_apply_fastfirstpass(param);
+
+    // may change params for auto-detect, etc
+    encoder->configure(param);
+    
+    // may change rate control and CPB params
+    if (!enforceLevel(*param, encoder->m_vps))
     {
-        if (!param->rc.bEnableSlowFirstPass)
-            x265_param_apply_fastfirstpass(param);
-        // may change params for auto-detect, etc
-        encoder->configure(param);
-        
-        // may change rate control and CPB params
-        if (!enforceLevel(*param, encoder->m_vps))
-        {
-            delete encoder;
-            return NULL;
-        }
-
-        // will detect and set profile/tier/level in VPS
-        determineLevel(*param, encoder->m_vps);
-
-        x265_print_params(param);
-        encoder->create();
-        encoder->init();
+        delete encoder;
+        return NULL;
     }
+
+    // will detect and set profile/tier/level in VPS
+    determineLevel(*param, encoder->m_vps);
+
+    encoder->create();
+    encoder->init();
+
+    x265_print_params(param);
 
     return encoder;
 }
@@ -120,6 +122,14 @@ int x265_encoder_encode(x265_encoder *enc, x265_nal **pp_nal, uint32_t *pi_nal, 
         numEncoded = encoder->encode(pic_in, pic_out);
     }
     while (numEncoded == 0 && !pic_in && encoder->m_numDelayedPic);
+
+    // do not allow reuse of these buffers for more than one picture. The
+    // encoder now owns these analysisData buffers.
+    if (pic_in)
+    {
+        pic_in->analysisData.intraData = NULL;
+        pic_in->analysisData.interData = NULL;
+    }
 
     if (pp_nal && numEncoded > 0)
     {
@@ -168,7 +178,6 @@ void x265_encoder_close(x265_encoder *enc)
 extern "C"
 void x265_cleanup(void)
 {
-    destroyROM();
     BitCost::destroy();
 }
 
@@ -186,6 +195,15 @@ void x265_picture_init(x265_param *param, x265_picture *pic)
     pic->bitDepth = param->internalBitDepth;
     pic->colorSpace = param->internalCsp;
     pic->forceqp = X265_QP_AUTO;
+    if (param->analysisMode)
+    {
+        uint32_t widthInCU       = (param->sourceWidth  + g_maxCUSize - 1) >> g_maxLog2CUSize;
+        uint32_t heightInCU      = (param->sourceHeight + g_maxCUSize - 1) >> g_maxLog2CUSize;
+
+        uint32_t numCUsInFrame   = widthInCU * heightInCU;
+        pic->analysisData.numCUsInFrame = numCUsInFrame;
+        pic->analysisData.numPartitions = NUM_CU_PARTITIONS;
+    }
 }
 
 extern "C"

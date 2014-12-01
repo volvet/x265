@@ -11,6 +11,11 @@ else()
     set(YASM_SRC checkasm-a.asm)
 endif()
 
+check_symbol_exists(__rdtsc "intrin.h" HAVE_RDTSC)
+if(HAVE_RDTSC)
+    add_definitions(-DHAVE_RDTSC=1)
+endif()
+
 add_executable(TestBench ${YASM_SRC}
     testbench.cpp testharness.h
     pixelharness.cpp pixelharness.h
@@ -18,6 +23,3 @@ add_executable(TestBench ${YASM_SRC}
     ipfilterharness.cpp ipfilterharness.h
     intrapredharness.cpp intrapredharness.h)
 target_link_libraries(TestBench x265-static ${PLATFORM_LIBS})
-
-add_executable(PoolTest testpool.cpp)
-target_link_libraries(PoolTest x265-static ${PLATFORM_LIBS})

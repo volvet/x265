@@ -21,9 +21,8 @@
  * For more information, contact us at license @ x265.com.
  *****************************************************************************/
 
-#include "TLibCommon/TComRom.h"
-#include "primitives.h"
 #include "common.h"
+#include "primitives.h"
 
 namespace x265 {
 // x265 private namespace
@@ -133,8 +132,6 @@ void x265_setup_primitives(x265_param *param, int cpuid)
 #endif
 
         Setup_Alias_Primitives(primitives);
-
-        initROM();
     }
 
     if (param->logLevel >= X265_LOG_INFO)

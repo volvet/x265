@@ -24,6 +24,8 @@
 #ifndef X265_SLICETYPE_H
 #define X265_SLICETYPE_H
 
+#include "common.h"
+#include "slice.h"
 #include "motion.h"
 #include "piclist.h"
 #include "wavefront.h"
@@ -71,8 +73,8 @@ public:
     EstimateRow()
     {
         m_me.setQP(X265_LOOKAHEAD_QP);
-        m_me.setSearchMethod(X265_HEX_SEARCH);
-        m_me.setSubpelRefine(1);
+        m_me.searchMethod = X265_HEX_SEARCH;
+        m_me.subpelRefine = 1;
         m_predictions = X265_MALLOC(pixel, 35 * 8 * 8);
         m_merange = 16;
         m_lookAheadLambda = (int)x265_lambda_tab[X265_LOOKAHEAD_QP];
@@ -103,7 +105,7 @@ public:
     Lowres         **m_curframes;
 
     ReferencePlanes  m_weightedRef;
-    WeightParam   m_w;
+    WeightParam      m_w;
 
     int              m_paddedLines;     // number of lines in padded frame
     int              m_widthInCU;       // width of lowres frame in downscale CUs
@@ -126,7 +128,7 @@ class Lookahead : public JobProvider
 {
 public:
 
-    Lookahead(x265_param *param, ThreadPool *pool, Encoder* enc);
+    Lookahead(x265_param *param, ThreadPool *pool);
     ~Lookahead();
     void init();
     void destroy();
@@ -159,7 +161,6 @@ protected:
     volatile int  m_bReady;
     volatile bool m_bFilling;
     volatile bool m_bFlushed;
-    Encoder      *m_top;
     bool findJob(int);
 
     /* called by addPicture() or flush() to trigger slice decisions */

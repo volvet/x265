@@ -34,27 +34,14 @@ namespace x265 {
 // private x265 namespace
 
 class Encoder;
+class Entropy;
+class FrameEncoder;
+struct ThreadLocalData;
 
 // Manages the processing of a single frame loopfilter
 class FrameFilter
 {
 public:
-
-    FrameFilter();
-
-    virtual ~FrameFilter() {}
-
-    void init(Encoder *top, FrameEncoder *frame, int numRows, Entropy* row0Coder);
-
-    void destroy();
-
-    void start(Frame *pic);
-
-    void processRow(int row, ThreadLocalData& tld);
-    void processRowPost(int row);
-    void processSao(int row);
-
-protected:
 
     x265_param*   m_param;
     Frame*        m_frame;
@@ -63,19 +50,25 @@ protected:
     int           m_vChromaShift;
     int           m_pad[2];
 
-public:
-
     Deblock       m_deblock;
     SAO           m_sao;
     int           m_numRows;
     int           m_saoRowDelay;
-
-    // SAO
-    Entropy       m_entropyCoder;
-    Entropy*      m_row0EntropyCoder;  // to mimic HM behavior
+    int           m_lastHeight;
     
-    /* Temp storage for ssim computation */
-    void*         m_ssimBuf;
+    void*         m_ssimBuf; /* Temp storage for ssim computation */
+
+    FrameFilter();
+
+    void init(Encoder *top, FrameEncoder *frame, int numRows);
+    void destroy();
+
+    void start(Frame *pic, Entropy& initState, int qp);
+
+    void processRow(int row);
+    void processRowPost(int row);
+    void processSao(int row);
+    uint32_t getCUHeight(int rowNum) const;
 };
 }
 

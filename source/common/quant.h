@@ -26,13 +26,12 @@
 
 #include "common.h"
 #include "scalinglist.h"
-#include "TLibCommon/TComRom.h"
-#include "TLibCommon/ContextTables.h"
+#include "contexts.h"
 
 namespace x265 {
 // private namespace
 
-class TComDataCU;
+class CUData;
 class Entropy;
 struct TUEntropyCodingParameters;
 
@@ -59,42 +58,56 @@ struct QpParam
     }
 };
 
+#define MAX_NUM_TR_COEFFS        MAX_TR_SIZE * MAX_TR_SIZE /* Maximum number of transform coefficients, for a 32x32 transform */
+#define MAX_NUM_TR_CATEGORIES    16                        /* 32, 16, 8, 4 transform categories each for luma and chroma */
+
+// NOTE: MUST be 16-byte aligned for asm code
+struct NoiseReduction
+{
+    /* 0 = luma 4x4,   1 = luma 8x8,   2 = luma 16x16,   3 = luma 32x32
+     * 4 = chroma 4x4, 5 = chroma 8x8, 6 = chroma 16x16, 7 = chroma 32x32
+     * Intra 0..7 - Inter 8..15 */
+    uint16_t offsetDenoise[MAX_NUM_TR_CATEGORIES][MAX_NUM_TR_COEFFS];
+    uint32_t residualSum[MAX_NUM_TR_CATEGORIES][MAX_NUM_TR_COEFFS];
+    uint32_t count[MAX_NUM_TR_CATEGORIES];
+};
+
 class Quant
 {
-public:
-
-    NoiseReduction*    m_nr;
-    Entropy*           m_entropyCoder;
-
 protected:
 
     const ScalingList* m_scalingList;
+    Entropy*           m_entropyCoder;
 
     QpParam            m_qpParam[3];
 
     bool               m_useRDOQ;
     int64_t            m_psyRdoqScale;
-    coeff_t*           m_resiDctCoeff;
-    coeff_t*           m_fencDctCoeff;
+    int16_t*           m_resiDctCoeff;
+    int16_t*           m_fencDctCoeff;
     int16_t*           m_fencShortBuf;
 
     enum { IEP_RATE = 32768 }; /* FIX15 cost of an equal probable bit */
 
 public:
 
+    NoiseReduction*    m_nr;
+    NoiseReduction*    m_frameNr; // Array of NR structures, one for each frameEncoder
+
     Quant();
     ~Quant();
 
     /* one-time setup */
-    bool init(bool useRDOQ, double psyScale, const ScalingList& scalingList);
+    bool init(bool useRDOQ, double psyScale, const ScalingList& scalingList, Entropy& entropy);
+    bool allocNoiseReduction(const x265_param& param);
 
     /* CU setup */
-    void setQPforQuant(TComDataCU* cu);
+    void setQPforQuant(const CUData& ctu);
 
-    uint32_t transformNxN(TComDataCU* cu, pixel *fenc, uint32_t fencstride, int16_t* residual, uint32_t stride, coeff_t* coeff,
+    uint32_t transformNxN(const CUData& cu, const pixel* fenc, uint32_t fencStride, const int16_t* residual, uint32_t resiStride, coeff_t* coeff,
                           uint32_t log2TrSize, TextType ttype, uint32_t absPartIdx, bool useTransformSkip);
 
-    void invtransformNxN(bool transQuantBypass, int16_t* residual, uint32_t stride, coeff_t* coeff,
+    void invtransformNxN(bool transQuantBypass, int16_t* residual, uint32_t resiStride, const coeff_t* coeff,
                          uint32_t log2TrSize, TextType ttype, bool bIntra, bool useTransformSkip, uint32_t numSig);
 
     /* static methods shared with entropy.cpp */
@@ -106,9 +119,9 @@ protected:
 
     void setChromaQP(int qpin, TextType ttype, int chFmt);
 
-    uint32_t signBitHidingHDQ(coeff_t* qcoeff, int32_t* deltaU, uint32_t numSig, const TUEntropyCodingParameters &codingParameters);
+    uint32_t signBitHidingHDQ(int16_t* qcoeff, int32_t* deltaU, uint32_t numSig, const TUEntropyCodingParameters &codingParameters);
 
-    uint32_t rdoQuant(TComDataCU* cu, coeff_t* dstCoeff, uint32_t log2TrSize, TextType ttype, uint32_t absPartIdx, bool usePsy);
+    uint32_t rdoQuant(const CUData& cu, int16_t* dstCoeff, uint32_t log2TrSize, TextType ttype, uint32_t absPartIdx, bool usePsy);
     inline uint32_t getRateLast(uint32_t posx, uint32_t posy) const;
 };
 

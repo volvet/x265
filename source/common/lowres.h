@@ -31,22 +31,22 @@
 namespace x265 {
 // private namespace
 
-class TComPicYuv;
+class PicYuv;
 
 struct ReferencePlanes
 {
     ReferencePlanes() { memset(this, 0, sizeof(ReferencePlanes)); }
 
-    pixel* fpelPlane;
-    pixel* lowresPlane[4];
+    pixel*   fpelPlane;
+    pixel*   lowresPlane[4];
 
-    bool isWeighted;
-    bool isLowres;
-    int  lumaStride;
-    int  weight;
-    int  offset;
-    int  shift;
-    int  round;
+    bool     isWeighted;
+    bool     isLowres;
+    intptr_t lumaStride;
+    int      weight;
+    int      offset;
+    int      shift;
+    int      round;
 
     /* lowres motion compensation, you must provide a buffer and stride for QPEL averaged pixels
      * in case QPEL is required.  Else it returns a pointer to the HPEL pixels */
@@ -56,11 +56,10 @@ struct ReferencePlanes
         {
             int hpelA = (qmv.y & 2) | ((qmv.x & 2) >> 1);
             pixel *frefA = lowresPlane[hpelA] + blockOffset + (qmv.x >> 2) + (qmv.y >> 2) * lumaStride;
-
-            MV qmvB = qmv + MV((qmv.x & 1) * 2, (qmv.y & 1) * 2);
-            int hpelB = (qmvB.y & 2) | ((qmvB.x & 2) >> 1);
-
-            pixel *frefB = lowresPlane[hpelB] + blockOffset + (qmvB.x >> 2) + (qmvB.y >> 2) * lumaStride;
+            int qmvx = qmv.x + (qmv.x & 1);
+            int qmvy = qmv.y + (qmv.y & 1);
+            int hpelB = (qmvy & 2) | ((qmvx & 2) >> 1);
+            pixel *frefB = lowresPlane[hpelB] + blockOffset + (qmvx >> 2) + (qmvy >> 2) * lumaStride;
             primitives.pixelavg_pp[LUMA_8x8](buf, outstride, frefA, lumaStride, frefB, lumaStride, 32);
             return buf;
         }
@@ -79,9 +78,10 @@ struct ReferencePlanes
             ALIGN_VAR_16(pixel, subpelbuf[8 * 8]);
             int hpelA = (qmv.y & 2) | ((qmv.x & 2) >> 1);
             pixel *frefA = lowresPlane[hpelA] + blockOffset + (qmv.x >> 2) + (qmv.y >> 2) * lumaStride;
-            MV qmvB = qmv + MV((qmv.x & 1) * 2, (qmv.y & 1) * 2);
-            int hpelB = (qmvB.y & 2) | ((qmvB.x & 2) >> 1);
-            pixel *frefB = lowresPlane[hpelB] + blockOffset + (qmvB.x >> 2) + (qmvB.y >> 2) * lumaStride;
+            int qmvx = qmv.x + (qmv.x & 1);
+            int qmvy = qmv.y + (qmv.y & 1);
+            int hpelB = (qmvy & 2) | ((qmvx & 2) >> 1);
+            pixel *frefB = lowresPlane[hpelB] + blockOffset + (qmvx >> 2) + (qmvy >> 2) * lumaStride;
             primitives.pixelavg_pp[LUMA_8x8](subpelbuf, 8, frefA, lumaStride, frefB, lumaStride, 32);
             return comp(fenc, FENC_STRIDE, subpelbuf, 8);
         }
@@ -116,6 +116,7 @@ struct Lowres : public ReferencePlanes
     int32_t*  rowSatds[X265_BFRAME_MAX + 2][X265_BFRAME_MAX + 2];
     int       intraMbs[X265_BFRAME_MAX + 2];
     int32_t*  intraCost;
+    uint8_t*  intraMode;
     int64_t   satdCost;
     uint16_t* lowresCostForRc;
     uint16_t(*lowresCosts[X265_BFRAME_MAX + 2][X265_BFRAME_MAX + 2]);
@@ -139,9 +140,9 @@ struct Lowres : public ReferencePlanes
     uint16_t* propagateCost;
     double    weightedCostDelta[X265_BFRAME_MAX + 2];
 
-    bool create(TComPicYuv *orig, int _bframes, bool bAqEnabled);
+    bool create(PicYuv *origPic, int _bframes, bool bAqEnabled);
     void destroy();
-    void init(TComPicYuv *orig, int poc, int sliceType);
+    void init(PicYuv *origPic, int poc, int sliceType);
 };
 }
 

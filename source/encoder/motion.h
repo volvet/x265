@@ -37,39 +37,32 @@ class MotionEstimate : public BitCost
 protected:
 
     /* Aligned copy of original pixels, extra room for manual alignment */
-    pixel *fencplane;
+    pixel*   fencplane;
     intptr_t fencLumaStride;
 
     pixelcmp_t sad;
     pixelcmp_t satd;
-    pixelcmp_t sa8d;
     pixelcmp_x3_t sad_x3;
     pixelcmp_x4_t sad_x4;
-
-    intptr_t blockOffset;
-    int partEnum;
-    int searchMethod;
-    int subpelRefine;
-
-    /* subpel generation buffers */
-    int blockwidth;
-    int blockheight;
 
     MotionEstimate& operator =(const MotionEstimate&);
 
 public:
 
+    intptr_t blockOffset;
+    int searchMethod;
+    int subpelRefine;
+
+    int blockwidth;
+    int partEnum;
+
     static const int COST_MAX = 1 << 28;
 
-    pixel *fenc;
+    pixel*   fenc;
 
     MotionEstimate();
 
-    virtual ~MotionEstimate();
-
-    void setSearchMethod(int i) { searchMethod = i; }
-
-    void setSubpelRefine(int i) { subpelRefine = i; }
+    ~MotionEstimate();
 
     /* Methods called at slice setup */
 
@@ -85,8 +78,6 @@ public:
      * require setSourcePU() to be called prior. */
 
     inline int bufSAD(pixel *fref, intptr_t stride)  { return sad(fenc, FENC_STRIDE, fref, stride); }
-
-    inline int bufSA8D(pixel *fref, intptr_t stride) { return sa8d(fenc, FENC_STRIDE, fref, stride); }
 
     inline int bufSATD(pixel *fref, intptr_t stride) { return satd(fenc, FENC_STRIDE, fref, stride); }
 

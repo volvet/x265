@@ -1,10 +1,10 @@
 Preset Options
 --------------
 
+.. _presets:
+
 Presets
 =======
-
-.. _preset-tune-ref:
 
 x265 has a number of predefined :option:`--preset` options that make
 trade-offs between encode speed (encoded frames per second) and
@@ -50,13 +50,15 @@ The presets adjust encoder parameters to affect these trade-offs.
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 | fast-intra   |    1      |     1     |    1     |   1    |  1   |    0   |  0   |   0    |    0     |    0    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
-| fast-cbf     |    1      |     1     |    1     |   1    |  0   |    0   |  0   |   0    |    0     |    0    |
+| b-intra      |    0      |     0     |    0     |   0    |  0   |    0   |  0   |   1    |    1     |    1    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
-| sao          |    0      |     1     |    1     |   1    |  1   |    1   |  1   |   1    |    1     |    1    |
+| sao          |    0      |     0     |    1     |   1    |  1   |    1   |  1   |   1    |    1     |    1    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 | signhide     |    0      |     1     |    1     |   1    |  1   |    1   |  1   |   1    |    1     |    1    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 | weightp      |    0      |     0     |    1     |   1    |  1   |    1   |  1   |   1    |    1     |    1    |
++--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
+| weightb      |    0      |     0     |    0     |   0    |  0   |    0   |  0   |   1    |    1     |    1    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 | aq-mode      |    0      |     0     |    2     |   2    |  2   |    2   |  2   |   2    |    2     |    2    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
@@ -64,15 +66,16 @@ The presets adjust encoder parameters to affect these trade-offs.
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 | rdLevel      |    2      |     2     |    2     |   2    |  2   |    3   |  4   |   6    |    6     |    6    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
-| lft          |    0      |     1     |    1     |   1    |  1   |    1   |  1   |   1    |    1     |    1    |
+| deblock      |    0      |     1     |    1     |   1    |  1   |    1   |  1   |   1    |    1     |    1    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 | tu-intra     |    1      |     1     |    1     |   1    |  1   |    1   |  1   |   2    |    3     |    4    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 | tu-inter     |    1      |     1     |    1     |   1    |  1   |    1   |  1   |   2    |    3     |    4    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 
-Placebo mode further enables transform-skip prediction analysis
-(lossless).
+Placebo mode enables transform-skip prediction evaluation.
+
+.. _tunings:
 
 Tuning
 ======
@@ -96,7 +99,46 @@ after the preset.
 +--------------+-----------------------------------------------------+
 | ssim         | enables adaptive quant auto-mode, disables psy-rd   |
 +--------------+-----------------------------------------------------+
+| grain        | improves retention of film grain. more below        |
++--------------+-----------------------------------------------------+
 | fastdecode   | no loop filters, no weighted pred, no intra in B    |
 +--------------+-----------------------------------------------------+
 | zerolatency  | no lookahead, no B frames, no cutree                |
 +--------------+-----------------------------------------------------+
+| cbr          | --pbratio 1.0 --ratetol 0.5                         |
++--------------+-----------------------------------------------------+
+
+
+Film Grain Retention
+~~~~~~~~~~~~~~~~~~~~
+
+:option:`--tune` grain tries to improve the retention of film grain in
+the reconstructed output. It helps rate distortion optimizations select
+modes which preserve high frequency noise:
+
+    * :option:`--psy-rd` 0.5
+    * :option:`--psy-rdoq` 30
+
+.. Note::
+
+    --psy-rdoq is only effective when RDOQuant is enabled, which is at
+    RD levels 4, 5, and 6 (presets slow and below).
+
+It lowers the strength of adaptive quantization, so residual energy can
+be more evenly distributed across the (noisy) picture:
+
+    * :option:`--aq-mode` 1
+    * :option:`--aq-strength` 0.3
+
+And it similarly tunes rate control to prevent the slice QP from
+swinging too wildly from frame to frame:
+
+    * :option:`--ipratio` 1.1
+    * :option:`--pbratio` 1.1
+    * :option:`--qcomp` 0.8
+
+And lastly it reduces the strength of deblocking to prevent grain being
+blurred on block boundaries:
+
+    * :option:`--deblock` -2
+
