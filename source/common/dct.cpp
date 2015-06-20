@@ -29,8 +29,10 @@
 
 #include "common.h"
 #include "primitives.h"
+#include "contexts.h"   // costCoeffNxN_c
+#include "threading.h"  // CLZ
 
-using namespace x265;
+using namespace X265_NS;
 
 #if _MSC_VER
 #pragma warning(disable: 4127) // conditional expression is constant, typical for templated functions
@@ -74,10 +76,10 @@ void inversedst(const int16_t* tmp, int16_t* block, int shift)  // input tmp, ou
         c[2] = tmp[i] - tmp[12 + i];
         c[3] = 74 * tmp[4 + i];
 
-        block[4 * i + 0] = (int16_t)Clip3(-32768, 32767, (29 * c[0] + 55 * c[1]     + c[3]               + rnd_factor) >> shift);
-        block[4 * i + 1] = (int16_t)Clip3(-32768, 32767, (55 * c[2] - 29 * c[1]     + c[3]               + rnd_factor) >> shift);
-        block[4 * i + 2] = (int16_t)Clip3(-32768, 32767, (74 * (tmp[i] - tmp[8 + i]  + tmp[12 + i])      + rnd_factor) >> shift);
-        block[4 * i + 3] = (int16_t)Clip3(-32768, 32767, (55 * c[0] + 29 * c[2]     - c[3]               + rnd_factor) >> shift);
+        block[4 * i + 0] = (int16_t)x265_clip3(-32768, 32767, (29 * c[0] + 55 * c[1]     + c[3]               + rnd_factor) >> shift);
+        block[4 * i + 1] = (int16_t)x265_clip3(-32768, 32767, (55 * c[2] - 29 * c[1]     + c[3]               + rnd_factor) >> shift);
+        block[4 * i + 2] = (int16_t)x265_clip3(-32768, 32767, (74 * (tmp[i] - tmp[8 + i]  + tmp[12 + i])      + rnd_factor) >> shift);
+        block[4 * i + 3] = (int16_t)x265_clip3(-32768, 32767, (55 * c[0] + 29 * c[2]     - c[3]               + rnd_factor) >> shift);
     }
 }
 
@@ -255,10 +257,10 @@ void partialButterflyInverse4(const int16_t* src, int16_t* dst, int shift, int l
         E[1] = g_t4[0][1] * src[0] + g_t4[2][1] * src[2 * line];
 
         /* Combining even and odd terms at each hierarchy levels to calculate the final spatial domain vector */
-        dst[0] = (int16_t)(Clip3(-32768, 32767, (E[0] + O[0] + add) >> shift));
-        dst[1] = (int16_t)(Clip3(-32768, 32767, (E[1] + O[1] + add) >> shift));
-        dst[2] = (int16_t)(Clip3(-32768, 32767, (E[1] - O[1] + add) >> shift));
-        dst[3] = (int16_t)(Clip3(-32768, 32767, (E[0] - O[0] + add) >> shift));
+        dst[0] = (int16_t)(x265_clip3(-32768, 32767, (E[0] + O[0] + add) >> shift));
+        dst[1] = (int16_t)(x265_clip3(-32768, 32767, (E[1] + O[1] + add) >> shift));
+        dst[2] = (int16_t)(x265_clip3(-32768, 32767, (E[1] - O[1] + add) >> shift));
+        dst[3] = (int16_t)(x265_clip3(-32768, 32767, (E[0] - O[0] + add) >> shift));
 
         src++;
         dst += 4;
@@ -292,8 +294,8 @@ void partialButterflyInverse8(const int16_t* src, int16_t* dst, int shift, int l
         E[2] = EE[1] - EO[1];
         for (k = 0; k < 4; k++)
         {
-            dst[k] = (int16_t)Clip3(-32768, 32767, (E[k] + O[k] + add) >> shift);
-            dst[k + 4] = (int16_t)Clip3(-32768, 32767, (E[3 - k] - O[3 - k] + add) >> shift);
+            dst[k] = (int16_t)x265_clip3(-32768, 32767, (E[k] + O[k] + add) >> shift);
+            dst[k + 4] = (int16_t)x265_clip3(-32768, 32767, (E[3 - k] - O[3 - k] + add) >> shift);
         }
 
         src++;
@@ -343,8 +345,8 @@ void partialButterflyInverse16(const int16_t* src, int16_t* dst, int shift, int 
 
         for (k = 0; k < 8; k++)
         {
-            dst[k]   = (int16_t)Clip3(-32768, 32767, (E[k] + O[k] + add) >> shift);
-            dst[k + 8] = (int16_t)Clip3(-32768, 32767, (E[7 - k] - O[7 - k] + add) >> shift);
+            dst[k]   = (int16_t)x265_clip3(-32768, 32767, (E[k] + O[k] + add) >> shift);
+            dst[k + 8] = (int16_t)x265_clip3(-32768, 32767, (E[7 - k] - O[7 - k] + add) >> shift);
         }
 
         src++;
@@ -407,8 +409,8 @@ void partialButterflyInverse32(const int16_t* src, int16_t* dst, int shift, int 
 
         for (k = 0; k < 16; k++)
         {
-            dst[k] = (int16_t)Clip3(-32768, 32767, (E[k] + O[k] + add) >> shift);
-            dst[k + 16] = (int16_t)Clip3(-32768, 32767, (E[15 - k] - O[15 - k] + add) >> shift);
+            dst[k] = (int16_t)x265_clip3(-32768, 32767, (E[k] + O[k] + add) >> shift);
+            dst[k + 16] = (int16_t)x265_clip3(-32768, 32767, (E[15 - k] - O[15 - k] + add) >> shift);
         }
 
         src++;
@@ -630,7 +632,7 @@ void dequant_normal_c(const int16_t* quantCoef, int16_t* coef, int num, int scal
     for (int n = 0; n < num; n++)
     {
         coeffQ = (quantCoef[n] * scale + add) >> shift;
-        coef[n] = (int16_t)Clip3(-32768, 32767, coeffQ);
+        coef[n] = (int16_t)x265_clip3(-32768, 32767, coeffQ);
     }
 }
 
@@ -649,15 +651,15 @@ void dequant_scaling_c(const int16_t* quantCoef, const int32_t* deQuantCoef, int
         for (int n = 0; n < num; n++)
         {
             coeffQ = ((quantCoef[n] * deQuantCoef[n]) + add) >> (shift - per);
-            coef[n] = (int16_t)Clip3(-32768, 32767, coeffQ);
+            coef[n] = (int16_t)x265_clip3(-32768, 32767, coeffQ);
         }
     }
     else
     {
         for (int n = 0; n < num; n++)
         {
-            coeffQ   = Clip3(-32768, 32767, quantCoef[n] * deQuantCoef[n]);
-            coef[n] = (int16_t)Clip3(-32768, 32767, coeffQ << (per - shift));
+            coeffQ   = x265_clip3(-32768, 32767, quantCoef[n] * deQuantCoef[n]);
+            coef[n] = (int16_t)x265_clip3(-32768, 32767, coeffQ << (per - shift));
         }
     }
 }
@@ -680,7 +682,7 @@ uint32_t quant_c(const int16_t* coef, const int32_t* quantCoeff, int32_t* deltaU
         if (level)
             ++numSig;
         level *= sign;
-        qCoef[blockpos] = (int16_t)Clip3(-32768, 32767, level);
+        qCoef[blockpos] = (int16_t)x265_clip3(-32768, 32767, level);
     }
 
     return numSig;
@@ -704,19 +706,17 @@ uint32_t nquant_c(const int16_t* coef, const int32_t* quantCoeff, int16_t* qCoef
         if (level)
             ++numSig;
         level *= sign;
-        qCoef[blockpos] = (int16_t)Clip3(-32768, 32767, level);
+        qCoef[blockpos] = (int16_t)x265_clip3(-32768, 32767, level);
     }
 
     return numSig;
 }
-
-int  count_nonzero_c(const int16_t* quantCoeff, int numCoeff)
+template<int trSize>
+int  count_nonzero_c(const int16_t* quantCoeff)
 {
     X265_CHECK(((intptr_t)quantCoeff & 15) == 0, "quant buffer not aligned\n");
-    X265_CHECK(numCoeff > 0 && (numCoeff & 15) == 0, "numCoeff invalid %d\n", numCoeff);
-
     int count = 0;
-
+    int numCoeff = trSize * trSize;
     for (int i = 0; i < numCoeff; i++)
     {
         count += quantCoeff[i] != 0;
@@ -754,33 +754,262 @@ void denoiseDct_c(int16_t* dctCoef, uint32_t* resSum, const uint16_t* offset, in
     }
 }
 
+int scanPosLast_c(const uint16_t *scan, const coeff_t *coeff, uint16_t *coeffSign, uint16_t *coeffFlag, uint8_t *coeffNum, int numSig, const uint16_t* /*scanCG4x4*/, const int /*trSize*/)
+{
+    memset(coeffNum, 0, MLS_GRP_NUM * sizeof(*coeffNum));
+    memset(coeffFlag, 0, MLS_GRP_NUM * sizeof(*coeffFlag));
+    memset(coeffSign, 0, MLS_GRP_NUM * sizeof(*coeffSign));
+
+    int scanPosLast = 0;
+    do
+    {
+        const uint32_t cgIdx = (uint32_t)scanPosLast >> MLS_CG_SIZE;
+
+        const uint32_t posLast = scan[scanPosLast++];
+
+        const int curCoeff = coeff[posLast];
+        const uint32_t isNZCoeff = (curCoeff != 0);
+        // get L1 sig map
+        // NOTE: the new algorithm is complicated, so I keep reference code here
+        //uint32_t posy   = posLast >> log2TrSize;
+        //uint32_t posx   = posLast - (posy << log2TrSize);
+        //uint32_t blkIdx0 = ((posy >> MLS_CG_LOG2_SIZE) << codingParameters.log2TrSizeCG) + (posx >> MLS_CG_LOG2_SIZE);
+        //const uint32_t blkIdx = ((posLast >> (2 * MLS_CG_LOG2_SIZE)) & ~maskPosXY) + ((posLast >> MLS_CG_LOG2_SIZE) & maskPosXY);
+        //sigCoeffGroupFlag64 |= ((uint64_t)isNZCoeff << blkIdx);
+        numSig -= isNZCoeff;
+
+        // TODO: optimize by instruction BTS
+        coeffSign[cgIdx] += (uint16_t)(((uint32_t)curCoeff >> 31) << coeffNum[cgIdx]);
+        coeffFlag[cgIdx] = (coeffFlag[cgIdx] << 1) + (uint16_t)isNZCoeff;
+        coeffNum[cgIdx] += (uint8_t)isNZCoeff;
+    }
+    while (numSig > 0);
+    return scanPosLast - 1;
+}
+
+uint32_t findPosFirstLast_c(const int16_t *dstCoeff, const intptr_t trSize, const uint16_t scanTbl[16])
+{
+    int n;
+
+    for (n = SCAN_SET_SIZE - 1; n >= 0; --n)
+    {
+        const uint32_t idx = scanTbl[n];
+        const uint32_t idxY = idx / MLS_CG_SIZE;
+        const uint32_t idxX = idx % MLS_CG_SIZE;
+        if (dstCoeff[idxY * trSize + idxX])
+            break;
+    }
+
+    X265_CHECK(n >= -1, "non-zero coeff scan failuare!\n");
+
+    uint32_t lastNZPosInCG = (uint32_t)n;
+
+    for (n = 0; n < SCAN_SET_SIZE; n++)
+    {
+        const uint32_t idx = scanTbl[n];
+        const uint32_t idxY = idx / MLS_CG_SIZE;
+        const uint32_t idxX = idx % MLS_CG_SIZE;
+        if (dstCoeff[idxY * trSize + idxX])
+            break;
+    }
+
+    uint32_t firstNZPosInCG = (uint32_t)n;
+
+    // NOTE: when coeff block all ZERO, the lastNZPosInCG is undefined and firstNZPosInCG is 16
+    return ((lastNZPosInCG << 16) | firstNZPosInCG);
+}
+
+
+uint32_t costCoeffNxN_c(const uint16_t *scan, const coeff_t *coeff, intptr_t trSize, uint16_t *absCoeff, const uint8_t *tabSigCtx, uint32_t scanFlagMask, uint8_t *baseCtx, int offset, int scanPosSigOff, int subPosBase)
+{
+    ALIGN_VAR_32(uint16_t, tmpCoeff[SCAN_SET_SIZE]);
+    uint32_t numNonZero = (scanPosSigOff < (SCAN_SET_SIZE - 1) ? 1 : 0);
+    uint32_t sum = 0;
+
+    // correct offset to match assembly
+    absCoeff -= numNonZero;
+
+    for (int i = 0; i < MLS_CG_SIZE; i++)
+    {
+        tmpCoeff[i * MLS_CG_SIZE + 0] = (uint16_t)abs(coeff[i * trSize + 0]);
+        tmpCoeff[i * MLS_CG_SIZE + 1] = (uint16_t)abs(coeff[i * trSize + 1]);
+        tmpCoeff[i * MLS_CG_SIZE + 2] = (uint16_t)abs(coeff[i * trSize + 2]);
+        tmpCoeff[i * MLS_CG_SIZE + 3] = (uint16_t)abs(coeff[i * trSize + 3]);
+    }
+
+    do
+    {
+        uint32_t blkPos, sig, ctxSig;
+        blkPos = scan[scanPosSigOff];
+        const uint32_t posZeroMask = (subPosBase + scanPosSigOff) ? ~0 : 0;
+        sig     = scanFlagMask & 1;
+        scanFlagMask >>= 1;
+        X265_CHECK((uint32_t)(tmpCoeff[blkPos] != 0) == sig, "sign bit mistake\n");
+        if ((scanPosSigOff != 0) || (subPosBase == 0) || numNonZero)
+        {
+            const uint32_t cnt = tabSigCtx[blkPos] + offset;
+            ctxSig = cnt & posZeroMask;
+
+            //X265_CHECK(ctxSig == Quant::getSigCtxInc(patternSigCtx, log2TrSize, trSize, codingParameters.scan[subPosBase + scanPosSigOff], bIsLuma, codingParameters.firstSignificanceMapContext), "sigCtx mistake!\n");;
+            //encodeBin(sig, baseCtx[ctxSig]);
+            const uint32_t mstate = baseCtx[ctxSig];
+            const uint32_t mps = mstate & 1;
+            const uint32_t stateBits = PFX(entropyStateBits)[mstate ^ sig];
+            uint32_t nextState = (stateBits >> 24) + mps;
+            if ((mstate ^ sig) == 1)
+                nextState = sig;
+            X265_CHECK(sbacNext(mstate, sig) == nextState, "nextState check failure\n");
+            X265_CHECK(sbacGetEntropyBits(mstate, sig) == (stateBits & 0xFFFFFF), "entropyBits check failure\n");
+            baseCtx[ctxSig] = (uint8_t)nextState;
+            sum += stateBits;
+        }
+        assert(numNonZero <= 15);
+        assert(blkPos <= 15);
+        absCoeff[numNonZero] = tmpCoeff[blkPos];
+        numNonZero += sig;
+        scanPosSigOff--;
+    }
+    while(scanPosSigOff >= 0);
+
+    return (sum & 0xFFFFFF);
+}
+
+uint32_t costCoeffRemain_c(uint16_t *absCoeff, int numNonZero, int idx)
+{
+    uint32_t goRiceParam = 0;
+
+    uint32_t sum = 0;
+    int baseLevel = 3;
+    do
+    {
+        if (idx >= C1FLAG_NUMBER)
+            baseLevel = 1;
+
+        // TODO: the IDX is not really idx, so this check inactive
+        //X265_CHECK(baseLevel == ((idx < C1FLAG_NUMBER) ? (2 + firstCoeff2) : 1), "baseLevel check failurr\n");
+        int codeNumber = absCoeff[idx] - baseLevel;
+
+        if (codeNumber >= 0)
+        {
+            //writeCoefRemainExGolomb(absCoeff[idx] - baseLevel, goRiceParam);
+            uint32_t length = 0;
+
+            codeNumber = ((uint32_t)codeNumber >> goRiceParam) - COEF_REMAIN_BIN_REDUCTION;
+            if (codeNumber >= 0)
+            {
+                {
+                    unsigned long cidx;
+                    CLZ(cidx, codeNumber + 1);
+                    length = cidx;
+                }
+                X265_CHECK((codeNumber != 0) || (length == 0), "length check failure\n");
+
+                codeNumber = (length + length);
+            }
+            sum += (COEF_REMAIN_BIN_REDUCTION + 1 + goRiceParam + codeNumber);
+
+            if (absCoeff[idx] > (COEF_REMAIN_BIN_REDUCTION << goRiceParam))
+                goRiceParam = (goRiceParam + 1) - (goRiceParam >> 2);
+            X265_CHECK(goRiceParam <= 4, "goRiceParam check failure\n");
+        }
+        baseLevel = 2;
+        idx++;
+    }
+    while(idx < numNonZero);
+
+    return sum;
+}
+
+
+uint32_t costC1C2Flag_c(uint16_t *absCoeff, intptr_t numC1Flag, uint8_t *baseCtxMod, intptr_t ctxOffset)
+{
+    uint32_t sum = 0;
+    uint32_t c1 = 1;
+    uint32_t firstC2Idx = 8;
+    uint32_t firstC2Flag = 2;
+    uint32_t c1Next = 0xFFFFFFFE;
+
+    int idx = 0;
+    do
+    {
+        uint32_t symbol1 = absCoeff[idx] > 1;
+        uint32_t symbol2 = absCoeff[idx] > 2;
+        //encodeBin(symbol1, baseCtxMod[c1]);
+        {
+            const uint32_t mstate = baseCtxMod[c1];
+            baseCtxMod[c1] = sbacNext(mstate, symbol1);
+            sum += sbacGetEntropyBits(mstate, symbol1);
+        }
+
+        if (symbol1)
+            c1Next = 0;
+
+        if (symbol1 + firstC2Flag == 3)
+            firstC2Flag = symbol2;
+
+        if (symbol1 + firstC2Idx == 9)
+            firstC2Idx  = idx;
+
+        c1 = (c1Next & 3);
+        c1Next >>= 2;
+        X265_CHECK(c1 <= 3, "c1 check failure\n");
+        idx++;
+    }
+    while(idx < numC1Flag);
+
+    if (!c1)
+    {
+        X265_CHECK((firstC2Flag <= 1), "firstC2FlagIdx check failure\n");
+
+        baseCtxMod += ctxOffset;
+
+        //encodeBin(firstC2Flag, baseCtxMod[0]);
+        {
+            const uint32_t mstate = baseCtxMod[0];
+            baseCtxMod[0] = sbacNext(mstate, firstC2Flag);
+            sum += sbacGetEntropyBits(mstate, firstC2Flag);
+        }
+    }
+
+    return (sum & 0x00FFFFFF) + (c1 << 26) + (firstC2Idx << 28);
+}
+
 }  // closing - anonymous file-static namespace
 
-namespace x265 {
+namespace X265_NS {
 // x265 private namespace
 
-void Setup_C_DCTPrimitives(EncoderPrimitives& p)
+void setupDCTPrimitives_c(EncoderPrimitives& p)
 {
     p.dequant_scaling = dequant_scaling_c;
     p.dequant_normal = dequant_normal_c;
     p.quant = quant_c;
     p.nquant = nquant_c;
-    p.dct[DST_4x4] = dst4_c;
-    p.dct[DCT_4x4] = dct4_c;
-    p.dct[DCT_8x8] = dct8_c;
-    p.dct[DCT_16x16] = dct16_c;
-    p.dct[DCT_32x32] = dct32_c;
-    p.idct[IDST_4x4] = idst4_c;
-    p.idct[IDCT_4x4] = idct4_c;
-    p.idct[IDCT_8x8] = idct8_c;
-    p.idct[IDCT_16x16] = idct16_c;
-    p.idct[IDCT_32x32] = idct32_c;
-    p.count_nonzero = count_nonzero_c;
+    p.dst4x4 = dst4_c;
+    p.cu[BLOCK_4x4].dct   = dct4_c;
+    p.cu[BLOCK_8x8].dct   = dct8_c;
+    p.cu[BLOCK_16x16].dct = dct16_c;
+    p.cu[BLOCK_32x32].dct = dct32_c;
+    p.idst4x4 = idst4_c;
+    p.cu[BLOCK_4x4].idct   = idct4_c;
+    p.cu[BLOCK_8x8].idct   = idct8_c;
+    p.cu[BLOCK_16x16].idct = idct16_c;
+    p.cu[BLOCK_32x32].idct = idct32_c;
     p.denoiseDct = denoiseDct_c;
+    p.cu[BLOCK_4x4].count_nonzero = count_nonzero_c<4>;
+    p.cu[BLOCK_8x8].count_nonzero = count_nonzero_c<8>;
+    p.cu[BLOCK_16x16].count_nonzero = count_nonzero_c<16>;
+    p.cu[BLOCK_32x32].count_nonzero = count_nonzero_c<32>;
 
-    p.copy_cnt[BLOCK_4x4] = copy_count<4>;
-    p.copy_cnt[BLOCK_8x8] = copy_count<8>;
-    p.copy_cnt[BLOCK_16x16] = copy_count<16>;
-    p.copy_cnt[BLOCK_32x32] = copy_count<32>;
+    p.cu[BLOCK_4x4].copy_cnt   = copy_count<4>;
+    p.cu[BLOCK_8x8].copy_cnt   = copy_count<8>;
+    p.cu[BLOCK_16x16].copy_cnt = copy_count<16>;
+    p.cu[BLOCK_32x32].copy_cnt = copy_count<32>;
+
+    p.scanPosLast = scanPosLast_c;
+    p.findPosFirstLast = findPosFirstLast_c;
+    p.costCoeffNxN = costCoeffNxN_c;
+    p.costCoeffRemain = costCoeffRemain_c;
+    p.costC1C2Flag = costC1C2Flag_c;
 }
 }

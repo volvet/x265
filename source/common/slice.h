@@ -1,5 +1,5 @@
 /*****************************************************************************
- * Copyright (C) 2014 x265 project
+ * Copyright (C) 2015 x265 project
  *
  * Authors: Steve Borho <steve@borho.org>
  *
@@ -26,7 +26,7 @@
 
 #include "common.h"
 
-namespace x265 {
+namespace X265_NS {
 // private namespace
 
 class Frame;
@@ -55,9 +55,9 @@ struct RPS
         , numberOfNegativePictures(0)
         , numberOfPositivePictures(0)
     {
-        ::memset(deltaPOC, 0, sizeof(deltaPOC));
-        ::memset(poc, 0, sizeof(poc));
-        ::memset(bUsed, 0, sizeof(bUsed));
+        memset(deltaPOC, 0, sizeof(deltaPOC));
+        memset(poc, 0, sizeof(poc));
+        memset(bUsed, 0, sizeof(bUsed));
     }
 
     void sortDeltaPOC();
@@ -98,6 +98,7 @@ namespace Level {
         LEVEL6 = 180,
         LEVEL6_1 = 183,
         LEVEL6_2 = 186,
+        LEVEL8_5 = 255,
     };
 }
 
@@ -149,8 +150,10 @@ struct TimingInfo
 
 struct VPS
 {
+    uint32_t         maxTempSubLayers;
     uint32_t         numReorderPics;
     uint32_t         maxDecPicBuffering;
+    uint32_t         maxLatencyIncrease;
     HRDInfo          hrdParameters;
     ProfileTierLevel ptl;
 };
@@ -228,7 +231,9 @@ struct SPS
     bool     bUseAMP; // use param
     uint32_t maxAMPDepth;
 
+    uint32_t maxTempSubLayers;   // max number of Temporal Sub layers
     uint32_t maxDecPicBuffering; // these are dups of VPS values
+    uint32_t maxLatencyIncrease;
     int      numReorderPics;
 
     bool     bUseStrongIntraSmoothing; // use param
@@ -283,6 +288,14 @@ struct WeightParam
         inputWeight = X265_MIN(inputWeight, 127);
     }
 };
+
+#define SET_WEIGHT(w, b, s, d, o) \
+    { \
+        (w).inputWeight = (s); \
+        (w).log2WeightDenom = (d); \
+        (w).inputOffset = (o); \
+        (w).bPresentFlag = (b); \
+    }
 
 class Slice
 {

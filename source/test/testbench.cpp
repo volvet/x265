@@ -32,9 +32,9 @@
 #include "param.h"
 #include "cpu.h"
 
-using namespace x265;
+using namespace X265_NS;
 
-const char* lumaPartStr[NUM_LUMA_PARTITIONS] =
+const char* lumaPartStr[NUM_PU_SIZES] =
 {
     "  4x4", "  8x8", "16x16", "32x32", "64x64",
     "  8x4", "  4x8",
@@ -46,7 +46,7 @@ const char* lumaPartStr[NUM_LUMA_PARTITIONS] =
     "64x48", "48x64", "64x16", "16x64",
 };
 
-const char* chromaPartStr420[NUM_CHROMA_PARTITIONS] =
+const char* chromaPartStr420[NUM_PU_SIZES] =
 {
     "  2x2", "  4x4", "  8x8", "16x16", "32x32",
     "  4x2", "  2x4",
@@ -58,7 +58,7 @@ const char* chromaPartStr420[NUM_CHROMA_PARTITIONS] =
     "32x24", "24x32", " 32x8", " 8x32",
 };
 
-const char* chromaPartStr422[NUM_CHROMA_PARTITIONS] =
+const char* chromaPartStr422[NUM_PU_SIZES] =
 {
     "  2x4", "  4x8", " 8x16", "16x32", "32x64",
     "  4x4", "  2x8",
@@ -152,8 +152,8 @@ int main(int argc, char *argv[])
 
     EncoderPrimitives cprim;
     memset(&cprim, 0, sizeof(EncoderPrimitives));
-    Setup_C_Primitives(cprim);
-    Setup_Alias_Primitives(cprim);
+    setupCPrimitives(cprim);
+    setupAliasPrimitives(cprim);
 
     struct test_arch_t
     {
@@ -168,25 +168,31 @@ int main(int argc, char *argv[])
         { "AVX", X265_CPU_AVX },
         { "XOP", X265_CPU_XOP },
         { "AVX2", X265_CPU_AVX2 },
+        { "BMI2", X265_CPU_AVX2 | X265_CPU_BMI1 | X265_CPU_BMI2 },
         { "", 0 },
     };
 
     for (int i = 0; test_arch[i].flag; i++)
     {
-        if (test_arch[i].flag & cpuid)
+        if ((test_arch[i].flag & cpuid) == test_arch[i].flag)
+        {
             printf("Testing primitives: %s\n", test_arch[i].name);
+            fflush(stdout);
+        }
         else
             continue;
 
         EncoderPrimitives vecprim;
         memset(&vecprim, 0, sizeof(vecprim));
-        Setup_Instrinsic_Primitives(vecprim, test_arch[i].flag);
+        setupInstrinsicPrimitives(vecprim, test_arch[i].flag);
+        setupAliasPrimitives(vecprim);
         for (size_t h = 0; h < sizeof(harness) / sizeof(TestHarness*); h++)
         {
             if (testname && strncmp(testname, harness[h]->getName(), strlen(testname)))
                 continue;
             if (!harness[h]->testCorrectness(cprim, vecprim))
             {
+                fflush(stdout);
                 fprintf(stderr, "\nx265: intrinsic primitive has failed. Go and fix that Right Now!\n");
                 return -1;
             }
@@ -194,7 +200,8 @@ int main(int argc, char *argv[])
 
         EncoderPrimitives asmprim;
         memset(&asmprim, 0, sizeof(asmprim));
-        Setup_Assembly_Primitives(asmprim, test_arch[i].flag);
+        setupAssemblyPrimitives(asmprim, test_arch[i].flag);
+        setupAliasPrimitives(asmprim);
         memcpy(&primitives, &asmprim, sizeof(EncoderPrimitives));
         for (size_t h = 0; h < sizeof(harness) / sizeof(TestHarness*); h++)
         {
@@ -202,6 +209,7 @@ int main(int argc, char *argv[])
                 continue;
             if (!harness[h]->testCorrectness(cprim, asmprim))
             {
+                fflush(stdout);
                 fprintf(stderr, "\nx265: asm primitive has failed. Go and fix that Right Now!\n");
                 return -1;
             }
@@ -212,9 +220,11 @@ int main(int argc, char *argv[])
 
     EncoderPrimitives optprim;
     memset(&optprim, 0, sizeof(optprim));
-    Setup_Instrinsic_Primitives(optprim, cpuid);
-    Setup_Assembly_Primitives(optprim, cpuid);
-    Setup_Alias_Primitives(optprim);
+    setupInstrinsicPrimitives(optprim, cpuid);
+    setupAssemblyPrimitives(optprim, cpuid);
+
+    /* Note that we do not setup aliases for performance tests, that would be
+     * redundant. The testbench only verifies they are correctly aliased */
 
     /* some hybrid primitives may rely on other primitives in the
      * global primitive table, so set up those pointers. This is a
@@ -222,6 +232,7 @@ int main(int argc, char *argv[])
     memcpy(&primitives, &optprim, sizeof(EncoderPrimitives));
 
     printf("\nTest performance improvement with full optimizations\n");
+    fflush(stdout);
 
     for (size_t h = 0; h < sizeof(harness) / sizeof(TestHarness*); h++)
     {

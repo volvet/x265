@@ -32,12 +32,13 @@
 #define HAVE_SSE4
 #define HAVE_AVX2
 #elif defined(__GNUC__)
-#if __clang__ || (__GNUC__ >= 4 && __GNUC_MINOR__ >= 3)
+#define GCC_VERSION (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__)
+#if __clang__ || GCC_VERSION >= 40300 /* gcc_version >= gcc-4.3.0 */
 #define HAVE_SSE3
 #define HAVE_SSSE3
 #define HAVE_SSE4
 #endif
-#if __clang__ || (__GNUC__ >= 4 && __GNUC_MINOR__ >= 7)
+#if __clang__ || GCC_VERSION >= 40700 /* gcc_version >= gcc-4.7.0 */
 #define HAVE_AVX2
 #endif
 #elif defined(_MSC_VER)
@@ -50,32 +51,32 @@
 #endif // compiler checks
 #endif // if X265_ARCH_X86
 
-namespace x265 {
+namespace X265_NS {
 // private x265 namespace
 
-void Setup_Vec_DCTPrimitives_sse3(EncoderPrimitives&);
-void Setup_Vec_DCTPrimitives_ssse3(EncoderPrimitives&);
-void Setup_Vec_DCTPrimitives_sse41(EncoderPrimitives&);
+void setupIntrinsicDCT_sse3(EncoderPrimitives&);
+void setupIntrinsicDCT_ssse3(EncoderPrimitives&);
+void setupIntrinsicDCT_sse41(EncoderPrimitives&);
 
 /* Use primitives for the best available vector architecture */
-void Setup_Instrinsic_Primitives(EncoderPrimitives &p, int cpuMask)
+void setupInstrinsicPrimitives(EncoderPrimitives &p, int cpuMask)
 {
 #ifdef HAVE_SSE3
     if (cpuMask & X265_CPU_SSE3)
     {
-        Setup_Vec_DCTPrimitives_sse3(p);
+        setupIntrinsicDCT_sse3(p);
     }
 #endif
 #ifdef HAVE_SSSE3
     if (cpuMask & X265_CPU_SSSE3)
     {
-        Setup_Vec_DCTPrimitives_ssse3(p);
+        setupIntrinsicDCT_ssse3(p);
     }
 #endif
 #ifdef HAVE_SSE4
     if (cpuMask & X265_CPU_SSE4)
     {
-        Setup_Vec_DCTPrimitives_sse41(p);
+        setupIntrinsicDCT_sse41(p);
     }
 #endif
     (void)p;

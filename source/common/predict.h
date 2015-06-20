@@ -30,11 +30,22 @@
 #include "shortyuv.h"
 #include "yuv.h"
 
-namespace x265 {
+namespace X265_NS {
 
 class CUData;
 class Slice;
 struct CUGeom;
+
+struct PredictionUnit
+{
+    uint32_t     ctuAddr;      // raster index of current CTU within its picture
+    uint32_t     cuAbsPartIdx; // z-order offset of current CU within its CTU
+    uint32_t     puAbsPartIdx; // z-order offset of current PU with its CU
+    int          width;
+    int          height;
+
+    PredictionUnit(const CUData& cu, const CUGeom& cuGeom, int puIdx);
+};
 
 class Predict
 {
@@ -56,38 +67,20 @@ public:
         int      leftUnits;
         int      unitWidth;
         int      unitHeight;
-        int      tuSize;
-        uint32_t log2TrSize;
+        int      log2TrSize;
         bool     bNeighborFlags[4 * MAX_NUM_SPU_W + 1];
     };
 
     ShortYuv  m_predShortYuv[2]; /* temporary storage for weighted prediction */
     int16_t*  m_immedVals;
 
-    /* Intra prediction buffers */
-    pixel*    m_predBuf;
-    pixel*    m_refAbove;
-    pixel*    m_refAboveFlt;
-    pixel*    m_refLeft;
-    pixel*    m_refLeftFlt;
+    // Unfiltered/filtered neighbours of the current partition.
+    pixel     intraNeighbourBuf[2][258];
 
     /* Slice information */
-    const Slice* m_predSlice;
     int       m_csp;
     int       m_hChromaShift;
     int       m_vChromaShift;
-
-    /* cached CU information for prediction */
-    uint32_t  m_ctuAddr;      // raster index of current CTU within its picture
-    uint32_t  m_cuAbsPartIdx; // z-order index of current CU within its CTU
-    uint32_t  m_puAbsPartIdx; // z-order index of current PU with its CU
-    int       m_puWidth;
-    int       m_puHeight;
-    int       m_refIdx0;
-    int       m_refIdx1;
-
-    /* TODO: Need to investigate clipping while writing into the TComDataCU fields itself */
-    MV        m_clippedMv[2];
 
     Predict();
     ~Predict();
@@ -95,42 +88,36 @@ public:
     bool allocBuffers(int csp);
 
     // motion compensation functions
-    void predInterLumaPixel(Yuv& dstYuv, const PicYuv& refPic, const MV& mv) const;
-    void predInterChromaPixel(Yuv& dstYuv, const PicYuv& refPic, const MV& mv) const;
+    void predInterLumaPixel(const PredictionUnit& pu, Yuv& dstYuv, const PicYuv& refPic, const MV& mv) const;
+    void predInterChromaPixel(const PredictionUnit& pu, Yuv& dstYuv, const PicYuv& refPic, const MV& mv) const;
 
-    void predInterLumaShort(ShortYuv& dstSYuv, const PicYuv& refPic, const MV& mv) const;
-    void predInterChromaShort(ShortYuv& dstSYuv, const PicYuv& refPic, const MV& mv) const;
+    void predInterLumaShort(const PredictionUnit& pu, ShortYuv& dstSYuv, const PicYuv& refPic, const MV& mv) const;
+    void predInterChromaShort(const PredictionUnit& pu, ShortYuv& dstSYuv, const PicYuv& refPic, const MV& mv) const;
 
-    void addWeightBi(Yuv& predYuv, const ShortYuv& srcYuv0, const ShortYuv& srcYuv1, const WeightValues wp0[3], const WeightValues wp1[3], bool bLuma, bool bChroma) const;
-    void addWeightUni(Yuv& predYuv, const ShortYuv& srcYuv, const WeightValues wp[3], bool bLuma, bool bChroma) const;
+    void addWeightBi(const PredictionUnit& pu, Yuv& predYuv, const ShortYuv& srcYuv0, const ShortYuv& srcYuv1, const WeightValues wp0[3], const WeightValues wp1[3], bool bLuma, bool bChroma) const;
+    void addWeightUni(const PredictionUnit& pu, Yuv& predYuv, const ShortYuv& srcYuv, const WeightValues wp[3], bool bLuma, bool bChroma) const;
 
-    /* Intra prediction helper functions */
-    static void initIntraNeighbors(const CUData& cu, uint32_t zOrderIdxInPart, uint32_t partDepth, bool isLuma, IntraNeighbors *IntraNeighbors);
-    static void fillReferenceSamples(const pixel* adiOrigin, intptr_t picStride, pixel* adiRef, const IntraNeighbors& intraNeighbors);
-
-    static bool isAboveLeftAvailable(const CUData& cu, uint32_t partIdxLT);
-    static int  isAboveAvailable(const CUData& cu, uint32_t partIdxLT, uint32_t partIdxRT, bool* bValidFlags);
-    static int  isLeftAvailable(const CUData& cu, uint32_t partIdxLT, uint32_t partIdxLB, bool* bValidFlags);
-    static int  isAboveRightAvailable(const CUData& cu, uint32_t partIdxLT, uint32_t partIdxRT, bool* bValidFlags);
-    static int  isBelowLeftAvailable(const CUData& cu, uint32_t partIdxLT, uint32_t partIdxLB, bool* bValidFlags);
-
-public:
-
-    /* prepMotionCompensation needs to be called to prepare MC with CU-relevant data */
-    void initMotionCompensation(const CUData& cu, const CUGeom& cuGeom, int partIdx);
-    void prepMotionCompensation(const CUData& cu, const CUGeom& cuGeom, int partIdx);
-    void motionCompensation(Yuv& predYuv, bool bLuma, bool bChroma);
+    void motionCompensation(const CUData& cu, const PredictionUnit& pu, Yuv& predYuv, bool bLuma, bool bChroma);
 
     /* Angular Intra */
     void predIntraLumaAng(uint32_t dirMode, pixel* pred, intptr_t stride, uint32_t log2TrSize);
-    void predIntraChromaAng(pixel* src, uint32_t dirMode, pixel* pred, intptr_t stride, uint32_t log2TrSizeC, int chFmt);
+    void predIntraChromaAng(uint32_t dirMode, pixel* pred, intptr_t stride, uint32_t log2TrSizeC);
+    void initAdiPattern(const CUData& cu, const CUGeom& cuGeom, uint32_t puAbsPartIdx, const IntraNeighbors& intraNeighbors, int dirMode);
+    void initAdiPatternChroma(const CUData& cu, const CUGeom& cuGeom, uint32_t puAbsPartIdx, const IntraNeighbors& intraNeighbors, uint32_t chromaId);
 
-    void initAdiPattern(const CUData& cu, const CUGeom& cuGeom, uint32_t absPartIdx, uint32_t partDepth, int dirMode);
-    void initAdiPatternChroma(const CUData& cu, const CUGeom& cuGeom, uint32_t absPartIdx, uint32_t partDepth, uint32_t chromaId);
-    pixel* getAdiChromaBuf(uint32_t chromaId, int tuSize)
-    {
-        return m_predBuf + (chromaId == 1 ? 0 : 2 * ADI_BUF_STRIDE * (tuSize * 2 + 1));
-    }
+    /* Intra prediction helper functions */
+    static void initIntraNeighbors(const CUData& cu, uint32_t absPartIdx, uint32_t tuDepth, bool isLuma, IntraNeighbors *IntraNeighbors);
+    static void fillReferenceSamples(const pixel* adiOrigin, intptr_t picStride, const IntraNeighbors& intraNeighbors, pixel dst[258]);
+    template<bool cip>
+    static bool isAboveLeftAvailable(const CUData& cu, uint32_t partIdxLT);
+    template<bool cip>
+    static int  isAboveAvailable(const CUData& cu, uint32_t partIdxLT, uint32_t partIdxRT, bool* bValidFlags);
+    template<bool cip>
+    static int  isLeftAvailable(const CUData& cu, uint32_t partIdxLT, uint32_t partIdxLB, bool* bValidFlags);
+    template<bool cip>
+    static int  isAboveRightAvailable(const CUData& cu, uint32_t partIdxRT, bool* bValidFlags, uint32_t numUnits);
+    template<bool cip>
+    static int  isBelowLeftAvailable(const CUData& cu, uint32_t partIdxLB, bool* bValidFlags, uint32_t numUnits);
 };
 }
 

@@ -1,5 +1,5 @@
 /*****************************************************************************
- * Copyright (C) 2014 x265 project
+ * Copyright (C) 2015 x265 project
  *
  * Authors: Steve Borho <steve@borho.org>
  *
@@ -114,7 +114,7 @@ int quantInterDefault8x8[64] =
 
 }
 
-namespace x265 {
+namespace X265_NS {
 // private namespace
 
 const int     ScalingList::s_numCoefPerSize[NUM_SIZES] = { 16, 64, 256, 1024 };
@@ -222,7 +222,7 @@ const int32_t* ScalingList::getScalingListDefaultAddress(int sizeId, int listId)
 
 void ScalingList::processDefaultMarix(int sizeId, int listId)
 {
-    ::memcpy(m_scalingListCoef[sizeId][listId], getScalingListDefaultAddress(sizeId, listId), sizeof(int) * X265_MIN(MAX_MATRIX_COEF_NUM, s_numCoefPerSize[sizeId]));
+    memcpy(m_scalingListCoef[sizeId][listId], getScalingListDefaultAddress(sizeId, listId), sizeof(int) * X265_MIN(MAX_MATRIX_COEF_NUM, s_numCoefPerSize[sizeId]));
     m_scalingListDC[sizeId][listId] = SCALING_LIST_DC;
 }
 

@@ -27,7 +27,7 @@
 #include "common.h"
 #include "x265.h"
 
-namespace x265 {
+namespace X265_NS {
 // private namespace
 
 class Bitstream;
@@ -48,6 +48,7 @@ public:
     uint8_t*    m_extraBuffer;
     uint32_t    m_extraOccupancy;
     uint32_t    m_extraAllocSize;
+    bool        m_annexB;
 
     NALList();
     ~NALList() { X265_FREE(m_buffer); X265_FREE(m_extraBuffer); }

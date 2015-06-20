@@ -157,7 +157,7 @@ avx2_idct8_2:   times 4 dw 89, 75, 50, 18
 
 idct8_shuf1:    dd 0, 2, 4, 6, 1, 3, 5, 7
 
-idct8_shuf2:    times 2 db 0, 1, 2, 3, 8, 9, 10, 11, 4, 5, 6, 7, 12, 13, 14, 15
+const idct8_shuf2,    times 2 db 0, 1, 2, 3, 8, 9, 10, 11, 4, 5, 6, 7, 12, 13, 14, 15
 
 idct8_shuf3:    times 2 db 12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3
 
@@ -261,6 +261,11 @@ tab_dst4:       times 2 dw 29, 55, 74, 84
                 times 2 dw 84, -29, -74, 55
                 times 2 dw 55, -84, 74, -29
 
+pw_dst4_tab:    times 4 dw 29,  55,  74,  84
+                times 4 dw 74,  74,   0, -74
+                times 4 dw 84, -29, -74,  55
+                times 4 dw 55, -84,  74, -29
+
 tab_idst4:      times 4 dw 29, +84
                 times 4 dw +74, +55
                 times 4 dw 55, -29
@@ -269,6 +274,16 @@ tab_idst4:      times 4 dw 29, +84
                 times 4 dw 0, +74
                 times 4 dw 84, +55
                 times 4 dw -74, -29
+
+pw_idst4_tab:   times 4 dw  29,  84
+                times 4 dw  55, -29
+                times 4 dw  74,  55
+                times 4 dw  74, -84
+                times 4 dw  74, -74
+                times 4 dw  84,  55
+                times 4 dw  0,   74
+                times 4 dw -74, -29
+pb_idst4_shuf:  times 2 db 0, 1, 8, 9, 2, 3, 10, 11, 4, 5, 12, 13, 6, 7, 14, 15
 
 tab_dct8_1:     times 2 dw 89, 50, 75, 18
                 times 2 dw 75, -89, -18, -50
@@ -316,7 +331,7 @@ cextern pd_512
 cextern pd_1024
 cextern pd_2048
 cextern pw_ppppmmmm
-
+cextern trans8_shuf
 ;------------------------------------------------------
 ;void dct4(const int16_t* src, int16_t* dst, intptr_t srcStride)
 ;------------------------------------------------------
@@ -567,6 +582,146 @@ cglobal idct4, 3, 4, 7
 ;------------------------------------------------------
 ;void dst4(const int16_t* src, int16_t* dst, intptr_t srcStride)
 ;------------------------------------------------------
+INIT_XMM sse2
+%if ARCH_X86_64
+cglobal dst4, 3, 4, 8+4
+  %define       coef0   m8
+  %define       coef1   m9
+  %define       coef2   m10
+  %define       coef3   m11
+%else ; ARCH_X86_64 = 0
+cglobal dst4, 3, 4, 8
+  %define       coef0   [r3 + 0 * 16]
+  %define       coef1   [r3 + 1 * 16]
+  %define       coef2   [r3 + 2 * 16]
+  %define       coef3   [r3 + 3 * 16]
+%endif ; ARCH_X86_64
+
+%if BIT_DEPTH == 8
+  %define       DST_SHIFT 1
+  mova          m5, [pd_1]
+%elif BIT_DEPTH == 10
+  %define       DST_SHIFT 3
+  mova          m5, [pd_4]
+%endif
+    add         r2d, r2d
+    lea         r3, [tab_dst4]
+%if ARCH_X86_64
+    mova        coef0, [r3 + 0 * 16]
+    mova        coef1, [r3 + 1 * 16]
+    mova        coef2, [r3 + 2 * 16]
+    mova        coef3, [r3 + 3 * 16]
+%endif
+    movh        m0, [r0 + 0 * r2]            ; load
+    movhps      m0, [r0 + 1 * r2]
+    lea         r0, [r0 + 2 * r2]
+    movh        m1, [r0]
+    movhps      m1, [r0 + r2]
+    pmaddwd     m2, m0, coef0                ; DST1
+    pmaddwd     m3, m1, coef0
+    pshufd      m6, m2, q2301
+    pshufd      m7, m3, q2301
+    paddd       m2, m6
+    paddd       m3, m7
+    pshufd      m2, m2, q3120
+    pshufd      m3, m3, q3120
+    punpcklqdq  m2, m3
+    paddd       m2, m5
+    psrad       m2, DST_SHIFT
+    pmaddwd     m3, m0, coef1
+    pmaddwd     m4, m1, coef1
+    pshufd      m6, m4, q2301
+    pshufd      m7, m3, q2301
+    paddd       m4, m6
+    paddd       m3, m7
+    pshufd      m4, m4, q3120
+    pshufd      m3, m3, q3120
+    punpcklqdq  m3, m4
+    paddd       m3, m5
+    psrad       m3, DST_SHIFT
+    packssdw    m2, m3                       ; m2 = T70
+    pmaddwd     m3, m0, coef2
+    pmaddwd     m4, m1, coef2
+    pshufd      m6, m4, q2301
+    pshufd      m7, m3, q2301
+    paddd       m4, m6
+    paddd       m3, m7
+    pshufd      m4, m4, q3120
+    pshufd      m3, m3, q3120
+    punpcklqdq  m3, m4
+    paddd       m3, m5
+    psrad       m3, DST_SHIFT
+    pmaddwd     m0, coef3
+    pmaddwd     m1, coef3
+    pshufd      m6, m0, q2301
+    pshufd      m7, m1, q2301
+    paddd       m0, m6
+    paddd       m1, m7
+    pshufd      m0, m0, q3120
+    pshufd      m1, m1, q3120
+    punpcklqdq  m0, m1
+    paddd       m0, m5
+    psrad       m0, DST_SHIFT
+    packssdw    m3, m0                       ; m3 = T71
+    mova        m5, [pd_128]
+
+    pmaddwd     m0, m2, coef0                ; DST2
+    pmaddwd     m1, m3, coef0
+    pshufd      m6, m0, q2301
+    pshufd      m7, m1, q2301
+    paddd       m0, m6
+    paddd       m1, m7
+    pshufd      m0, m0, q3120
+    pshufd      m1, m1, q3120
+    punpcklqdq  m0, m1
+    paddd       m0, m5
+    psrad       m0, 8
+
+    pmaddwd     m4, m2, coef1
+    pmaddwd     m1, m3, coef1
+    pshufd      m6, m4, q2301
+    pshufd      m7, m1, q2301
+    paddd       m4, m6
+    paddd       m1, m7
+    pshufd      m4, m4, q3120
+    pshufd      m1, m1, q3120
+    punpcklqdq  m4, m1
+    paddd       m4, m5
+    psrad       m4, 8
+    packssdw    m0, m4
+    movu        [r1 + 0 * 16], m0
+
+    pmaddwd     m0, m2, coef2
+    pmaddwd     m1, m3, coef2
+    pshufd      m6, m0, q2301
+    pshufd      m7, m1, q2301
+    paddd       m0, m6
+    paddd       m1, m7
+    pshufd      m0, m0, q3120
+    pshufd      m1, m1, q3120
+    punpcklqdq  m0, m1
+    paddd       m0, m5
+    psrad       m0, 8
+
+    pmaddwd     m2, coef3
+    pmaddwd     m3, coef3
+    pshufd      m6, m2, q2301
+    pshufd      m7, m3, q2301
+    paddd       m2, m6
+    paddd       m3, m7
+    pshufd      m2, m2, q3120
+    pshufd      m3, m3, q3120
+    punpcklqdq  m2, m3
+    paddd       m2, m5
+    psrad       m2, 8
+    packssdw    m0, m2
+    movu        [r1 + 1 * 16], m0
+
+    RET
+
+;------------------------------------------------------
+;void dst4(const int16_t* src, int16_t* dst, intptr_t srcStride)
+;------------------------------------------------------
 INIT_XMM ssse3
 %if ARCH_X86_64
 cglobal dst4, 3, 4, 8+2
@@ -654,6 +809,59 @@ cglobal dst4, 3, 4, 8
     packssdw    m0, m2
     movu        [r1 + 1 * 16], m0
 
+    RET
+
+;------------------------------------------------------------------
+;void dst4(const int16_t* src, int16_t* dst, intptr_t srcStride)
+;------------------------------------------------------------------
+INIT_YMM avx2
+cglobal dst4, 3, 4, 6
+%if BIT_DEPTH == 8
+  %define       DST_SHIFT 1
+  vpbroadcastd  m5, [pd_1]
+%elif BIT_DEPTH == 10
+  %define       DST_SHIFT 3
+  vpbroadcastd  m5, [pd_4]
+%endif
+    mova        m4, [trans8_shuf]
+    add         r2d, r2d
+    lea         r3, [pw_dst4_tab]
+
+    movq        xm0, [r0 + 0 * r2]
+    movhps      xm0, [r0 + 1 * r2]
+    lea         r0, [r0 + 2 * r2]
+    movq        xm1, [r0]
+    movhps      xm1, [r0 + r2]
+
+    vinserti128 m0, m0, xm1, 1          ; m0 = src[0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15]
+
+    pmaddwd     m2, m0, [r3 + 0 * 32]
+    pmaddwd     m1, m0, [r3 + 1 * 32]
+    phaddd      m2, m1
+    paddd       m2, m5
+    psrad       m2, DST_SHIFT
+    pmaddwd     m3, m0, [r3 + 2 * 32]
+    pmaddwd     m1, m0, [r3 + 3 * 32]
+    phaddd      m3, m1
+    paddd       m3, m5
+    psrad       m3, DST_SHIFT
+    packssdw    m2, m3
+    vpermd      m2, m4, m2
+
+    vpbroadcastd m5, [pd_128]
+    pmaddwd     m0, m2, [r3 + 0 * 32]
+    pmaddwd     m1, m2, [r3 + 1 * 32]
+    phaddd      m0, m1
+    paddd       m0, m5
+    psrad       m0, 8
+    pmaddwd     m3, m2, [r3 + 2 * 32]
+    pmaddwd     m2, m2, [r3 + 3 * 32]
+    phaddd      m3, m2
+    paddd       m3, m5
+    psrad       m3, 8
+    packssdw    m0, m3
+    vpermd      m0, m4, m0
+    movu        [r1], m0
     RET
 
 ;-------------------------------------------------------
@@ -748,6 +956,443 @@ cglobal idst4, 3, 4, 7
     movhps      [r1 + r2], m1
     RET
 
+;-----------------------------------------------------------------
+;void idst4(const int16_t* src, int16_t* dst, intptr_t dstStride)
+;-----------------------------------------------------------------
+INIT_YMM avx2
+cglobal idst4, 3, 4, 6
+%if BIT_DEPTH == 8
+  vpbroadcastd  m4, [pd_2048]
+  %define       IDCT4_SHIFT 12
+%elif BIT_DEPTH == 10
+  vpbroadcastd  m4, [pd_512]
+  %define       IDCT4_SHIFT 10
+%else
+  %error Unsupported BIT_DEPTH!
+%endif
+    add         r2d, r2d
+    lea         r3, [pw_idst4_tab]
+
+    movu        xm0, [r0 + 0 * 16]
+    movu        xm1, [r0 + 1 * 16]
+
+    punpcklwd   m2, m0, m1
+    punpckhwd   m0, m1
+
+    vinserti128 m2, m2, xm2, 1
+    vinserti128 m0, m0, xm0, 1
+
+    vpbroadcastd m5, [pd_64]
+    pmaddwd     m1, m2, [r3 + 0 * 32]
+    pmaddwd     m3, m0, [r3 + 1 * 32]
+    paddd       m1, m3
+    paddd       m1, m5
+    psrad       m1, 7
+    pmaddwd     m3, m2, [r3 + 2 * 32]
+    pmaddwd     m0, [r3 + 3 * 32]
+    paddd       m3, m0
+    paddd       m3, m5
+    psrad       m3, 7
+
+    packssdw    m0, m1, m3
+    pshufb      m0, [pb_idst4_shuf]
+    vpermq      m1, m0, 11101110b
+
+    punpcklwd   m2, m0, m1
+    punpckhwd   m0, m1
+    punpcklwd   m1, m2, m0
+    punpckhwd   m2, m0
+
+    vpermq      m1, m1, 01000100b
+    vpermq      m2, m2, 01000100b
+
+    pmaddwd     m0, m1, [r3 + 0 * 32]
+    pmaddwd     m3, m2, [r3 + 1 * 32]
+    paddd       m0, m3
+    paddd       m0, m4
+    psrad       m0, IDCT4_SHIFT
+    pmaddwd     m3, m1, [r3 + 2 * 32]
+    pmaddwd     m2, m2, [r3 + 3 * 32]
+    paddd       m3, m2
+    paddd       m3, m4
+    psrad       m3, IDCT4_SHIFT
+
+    packssdw    m0, m3
+    pshufb      m1, m0, [pb_idst4_shuf]
+    vpermq      m0, m1, 11101110b
+
+    punpcklwd   m2, m1, m0
+    movq        [r1 + 0 * r2], xm2
+    movhps      [r1 + 1 * r2], xm2
+
+    punpckhwd   m1, m0
+    movq        [r1 + 2 * r2], xm1
+    lea         r1, [r1 + 2 * r2]
+    movhps      [r1 + r2], xm1
+    RET
+
+;-------------------------------------------------------
+; void dct8(const int16_t* src, int16_t* dst, intptr_t srcStride)
+;-------------------------------------------------------
+INIT_XMM sse2
+cglobal dct8, 3,6,8,0-16*mmsize
+    ;------------------------
+    ; Stack Mapping(dword)
+    ;------------------------
+    ; Row0[0-3] Row1[0-3]
+    ; ...
+    ; Row6[0-3] Row7[0-3]
+    ; Row0[0-3] Row7[0-3]
+    ; ...
+    ; Row6[4-7] Row7[4-7]
+    ;------------------------
+%if BIT_DEPTH == 10
+  %define       DCT_SHIFT1 4
+  %define       DCT_ADD1 [pd_8]
+%elif BIT_DEPTH == 8
+  %define       DCT_SHIFT1 2
+  %define       DCT_ADD1 [pd_2]
+%else
+  %error Unsupported BIT_DEPTH!
+%endif
+%define         DCT_ADD2 [pd_256]
+%define         DCT_SHIFT2 9
+
+    add         r2, r2
+    lea         r3, [r2 * 3]
+    mov         r5, rsp
+%assign x 0
+%rep 2
+    movu        m0, [r0]
+    movu        m1, [r0 + r2]
+    movu        m2, [r0 + r2 * 2]
+    movu        m3, [r0 + r3]
+
+    punpcklwd   m4, m0, m1
+    punpckhwd   m0, m1
+    punpcklwd   m5, m2, m3
+    punpckhwd   m2, m3
+    punpckldq   m1, m4, m5          ; m1 = [1 0]
+    punpckhdq   m4, m5              ; m4 = [3 2]
+    punpckldq   m3, m0, m2
+    punpckhdq   m0, m2
+    pshufd      m2, m3, 0x4E        ; m2 = [4 5]
+    pshufd      m0, m0, 0x4E        ; m0 = [6 7]
+
+    paddw       m3, m1, m0
+    psubw       m1, m0              ; m1 = [d1 d0]
+    paddw       m0, m4, m2
+    psubw       m4, m2              ; m4 = [d3 d2]
+    punpcklqdq  m2, m3, m0          ; m2 = [s2 s0]
+    punpckhqdq  m3, m0
+    pshufd      m3, m3, 0x4E        ; m3 = [s1 s3]
+
+    punpcklwd   m0, m1, m4          ; m0 = [d2/d0]
+    punpckhwd   m1, m4              ; m1 = [d3/d1]
+    punpckldq   m4, m0, m1          ; m4 = [d3 d1 d2 d0]
+    punpckhdq   m0, m1              ; m0 = [d3 d1 d2 d0]
+
+    ; odd
+    lea         r4, [tab_dct8_1]
+    pmaddwd     m1, m4, [r4 + 0*16]
+    pmaddwd     m5, m0, [r4 + 0*16]
+    pshufd      m1, m1, 0xD8
+    pshufd      m5, m5, 0xD8
+    mova        m7, m1
+    punpckhqdq  m7, m5
+    punpcklqdq  m1, m5
+    paddd       m1, m7
+    paddd       m1, DCT_ADD1
+    psrad       m1, DCT_SHIFT1
+  %if x == 1
+    pshufd      m1, m1, 0x1B
+  %endif
+    mova        [r5 + 1*2*mmsize], m1 ; Row 1
+
+    pmaddwd     m1, m4, [r4 + 1*16]
+    pmaddwd     m5, m0, [r4 + 1*16]
+    pshufd      m1, m1, 0xD8
+    pshufd      m5, m5, 0xD8
+    mova        m7, m1
+    punpckhqdq  m7, m5
+    punpcklqdq  m1, m5
+    paddd       m1, m7
+    paddd       m1, DCT_ADD1
+    psrad       m1, DCT_SHIFT1
+  %if x == 1
+    pshufd      m1, m1, 0x1B
+  %endif
+    mova        [r5 + 3*2*mmsize], m1 ; Row 3
+
+    pmaddwd     m1, m4, [r4 + 2*16]
+    pmaddwd     m5, m0, [r4 + 2*16]
+    pshufd      m1, m1, 0xD8
+    pshufd      m5, m5, 0xD8
+    mova        m7, m1
+    punpckhqdq  m7, m5
+    punpcklqdq  m1, m5
+    paddd       m1, m7
+    paddd       m1, DCT_ADD1
+    psrad       m1, DCT_SHIFT1
+  %if x == 1
+    pshufd      m1, m1, 0x1B
+  %endif
+    mova        [r5 + 5*2*mmsize], m1 ; Row 5
+
+    pmaddwd     m4, [r4 + 3*16]
+    pmaddwd     m0, [r4 + 3*16]
+    pshufd      m4, m4, 0xD8
+    pshufd      m0, m0, 0xD8
+    mova        m7, m4
+    punpckhqdq  m7, m0
+    punpcklqdq  m4, m0
+    paddd       m4, m7
+    paddd       m4, DCT_ADD1
+    psrad       m4, DCT_SHIFT1
+  %if x == 1
+    pshufd      m4, m4, 0x1B
+  %endif
+    mova        [r5 + 7*2*mmsize], m4; Row 7
+
+    ; even
+    lea         r4, [tab_dct4]
+    paddw       m0, m2, m3          ; m0 = [EE1 EE0]
+    pshufd      m0, m0, 0xD8
+    pshuflw     m0, m0, 0xD8
+    pshufhw     m0, m0, 0xD8
+    psubw       m2, m3              ; m2 = [EO1 EO0]
+    pmullw      m2, [pw_ppppmmmm]
+    pshufd      m2, m2, 0xD8
+    pshuflw     m2, m2, 0xD8
+    pshufhw     m2, m2, 0xD8
+    pmaddwd     m3, m0, [r4 + 0*16]
+    paddd       m3, DCT_ADD1
+    psrad       m3, DCT_SHIFT1
+  %if x == 1
+    pshufd      m3, m3, 0x1B
+  %endif
+    mova        [r5 + 0*2*mmsize], m3 ; Row 0
+    pmaddwd     m0, [r4 + 2*16]
+    paddd       m0, DCT_ADD1
+    psrad       m0, DCT_SHIFT1
+  %if x == 1
+    pshufd      m0, m0, 0x1B
+  %endif
+    mova        [r5 + 4*2*mmsize], m0 ; Row 4
+    pmaddwd     m3, m2, [r4 + 1*16]
+    paddd       m3, DCT_ADD1
+    psrad       m3, DCT_SHIFT1
+  %if x == 1
+    pshufd      m3, m3, 0x1B
+  %endif
+    mova        [r5 + 2*2*mmsize], m3 ; Row 2
+    pmaddwd     m2, [r4 + 3*16]
+    paddd       m2, DCT_ADD1
+    psrad       m2, DCT_SHIFT1
+  %if x == 1
+    pshufd      m2, m2, 0x1B
+  %endif
+    mova        [r5 + 6*2*mmsize], m2 ; Row 6
+
+  %if x != 1
+    lea         r0, [r0 + r2 * 4]
+    add         r5, mmsize
+  %endif
+%assign x x+1
+%endrep
+
+    mov         r0, rsp                 ; r0 = pointer to Low Part
+    lea         r4, [tab_dct8_2]
+
+%assign x 0
+%rep 4
+    mova        m0, [r0 + 0*2*mmsize]     ; [3 2 1 0]
+    mova        m1, [r0 + 1*2*mmsize]
+    paddd       m2, m0, [r0 + (0*2+1)*mmsize]
+    pshufd      m2, m2, 0x9C            ; m2 = [s2 s1 s3 s0]
+    paddd       m3, m1, [r0 + (1*2+1)*mmsize]
+    pshufd      m3, m3, 0x9C            ; m3 = ^^
+    psubd       m0, [r0 + (0*2+1)*mmsize]     ; m0 = [d3 d2 d1 d0]
+    psubd       m1, [r0 + (1*2+1)*mmsize]     ; m1 = ^^
+
+    ; even
+    pshufd      m4, m2, 0xD8
+    pshufd      m3, m3, 0xD8
+    mova        m7, m4
+    punpckhqdq  m7, m3
+    punpcklqdq  m4, m3
+    mova        m2, m4
+    paddd       m4, m7                  ; m4 = [EE1 EE0 EE1 EE0]
+    psubd       m2, m7                  ; m2 = [EO1 EO0 EO1 EO0]
+
+    pslld       m4, 6                   ; m4 = [64*EE1 64*EE0]
+    mova        m5, m2
+    pmuludq     m5, [r4 + 0*16]
+    pshufd      m7, m2, 0xF5
+    movu        m6, [r4 + 0*16 + 4]
+    pmuludq     m7, m6
+    pshufd      m5, m5, 0x88
+    pshufd      m7, m7, 0x88
+    punpckldq   m5, m7                  ; m5 = [36*EO1 83*EO0]
+    pshufd      m7, m2, 0xF5
+    pmuludq     m2, [r4 + 1*16]
+    movu        m6, [r4 + 1*16 + 4]
+    pmuludq     m7, m6
+    pshufd      m2, m2, 0x88
+    pshufd      m7, m7, 0x88
+    punpckldq   m2, m7                  ; m2 = [83*EO1 36*EO0]
+
+    pshufd      m3, m4, 0xD8
+    pshufd      m5, m5, 0xD8
+    mova        m7, m3
+    punpckhqdq  m7, m5
+    punpcklqdq  m3, m5
+    paddd       m3, m7                  ; m3 = [Row2 Row0]
+    paddd       m3, DCT_ADD2
+    psrad       m3, DCT_SHIFT2
+    pshufd      m4, m4, 0xD8
+    pshufd      m2, m2, 0xD8
+    mova        m7, m4
+    punpckhqdq  m7, m2
+    punpcklqdq  m4, m2
+    psubd       m4, m7                  ; m4 = [Row6 Row4]
+    paddd       m4, DCT_ADD2
+    psrad       m4, DCT_SHIFT2
+
+    packssdw    m3, m3
+    movd        [r1 + 0*mmsize], m3
+    pshufd      m3, m3, 1
+    movd        [r1 + 2*mmsize], m3
+
+    packssdw    m4, m4
+    movd        [r1 + 4*mmsize], m4
+    pshufd      m4, m4, 1
+    movd        [r1 + 6*mmsize], m4
+
+    ; odd
+    mova        m2, m0
+    pmuludq     m2, [r4 + 2*16]
+    pshufd      m7, m0, 0xF5
+    movu        m6, [r4 + 2*16 + 4]
+    pmuludq     m7, m6
+    pshufd      m2, m2, 0x88
+    pshufd      m7, m7, 0x88
+    punpckldq   m2, m7
+    mova        m3, m1
+    pmuludq     m3, [r4 + 2*16]
+    pshufd      m7, m1, 0xF5
+    pmuludq     m7, m6
+    pshufd      m3, m3, 0x88
+    pshufd      m7, m7, 0x88
+    punpckldq   m3, m7
+    mova        m4, m0
+    pmuludq     m4, [r4 + 3*16]
+    pshufd      m7, m0, 0xF5
+    movu        m6, [r4 + 3*16 + 4]
+    pmuludq     m7, m6
+    pshufd      m4, m4, 0x88
+    pshufd      m7, m7, 0x88
+    punpckldq   m4, m7
+    mova        m5, m1
+    pmuludq     m5, [r4 + 3*16]
+    pshufd      m7, m1, 0xF5
+    pmuludq     m7, m6
+    pshufd      m5, m5, 0x88
+    pshufd      m7, m7, 0x88
+    punpckldq   m5, m7
+    pshufd      m2, m2, 0xD8
+    pshufd      m3, m3, 0xD8
+    mova        m7, m2
+    punpckhqdq  m7, m3
+    punpcklqdq  m2, m3
+    paddd       m2, m7
+    pshufd      m4, m4, 0xD8
+    pshufd      m5, m5, 0xD8
+    mova        m7, m4
+    punpckhqdq  m7, m5
+    punpcklqdq  m4, m5
+    paddd       m4, m7
+    pshufd      m2, m2, 0xD8
+    pshufd      m4, m4, 0xD8
+    mova        m7, m2
+    punpckhqdq  m7, m4
+    punpcklqdq  m2, m4
+    paddd       m2, m7                  ; m2 = [Row3 Row1]
+    paddd       m2, DCT_ADD2
+    psrad       m2, DCT_SHIFT2
+
+    packssdw    m2, m2
+    movd        [r1 + 1*mmsize], m2
+    pshufd      m2, m2, 1
+    movd        [r1 + 3*mmsize], m2
+
+    mova        m2, m0
+    pmuludq     m2, [r4 + 4*16]
+    pshufd      m7, m0, 0xF5
+    movu        m6, [r4 + 4*16 + 4]
+    pmuludq     m7, m6
+    pshufd      m2, m2, 0x88
+    pshufd      m7, m7, 0x88
+    punpckldq   m2, m7
+    mova        m3, m1
+    pmuludq     m3, [r4 + 4*16]
+    pshufd      m7, m1, 0xF5
+    pmuludq     m7, m6
+    pshufd      m3, m3, 0x88
+    pshufd      m7, m7, 0x88
+    punpckldq   m3, m7
+    mova        m4, m0
+    pmuludq     m4, [r4 + 5*16]
+    pshufd      m7, m0, 0xF5
+    movu        m6, [r4 + 5*16 + 4]
+    pmuludq     m7, m6
+    pshufd      m4, m4, 0x88
+    pshufd      m7, m7, 0x88
+    punpckldq   m4, m7
+    mova        m5, m1
+    pmuludq     m5, [r4 + 5*16]
+    pshufd      m7, m1, 0xF5
+    pmuludq     m7, m6
+    pshufd      m5, m5, 0x88
+    pshufd      m7, m7, 0x88
+    punpckldq   m5, m7
+    pshufd      m2, m2, 0xD8
+    pshufd      m3, m3, 0xD8
+    mova        m7, m2
+    punpckhqdq  m7, m3
+    punpcklqdq  m2, m3
+    paddd       m2, m7
+    pshufd      m4, m4, 0xD8
+    pshufd      m5, m5, 0xD8
+    mova        m7, m4
+    punpckhqdq  m7, m5
+    punpcklqdq  m4, m5
+    paddd       m4, m7
+    pshufd      m2, m2, 0xD8
+    pshufd      m4, m4, 0xD8
+    mova        m7, m2
+    punpckhqdq  m7, m4
+    punpcklqdq  m2, m4
+    paddd       m2, m7                  ; m2 = [Row7 Row5]
+    paddd       m2, DCT_ADD2
+    psrad       m2, DCT_SHIFT2
+
+    packssdw    m2, m2
+    movd        [r1 + 5*mmsize], m2
+    pshufd      m2, m2, 1
+    movd        [r1 + 7*mmsize], m2
+%if x < 3
+    add         r1, mmsize/4
+    add         r0, 2*2*mmsize
+%endif
+%assign x x+1
+%endrep
+
+    RET
+%undef IDCT_SHIFT1
+%undef IDCT_ADD1
+%undef IDCT_SHIFT2
+%undef IDCT_ADD2
 
 ;-------------------------------------------------------
 ; void dct8(const int16_t* src, int16_t* dst, intptr_t srcStride)
@@ -976,6 +1621,382 @@ cglobal dct8, 3,6,7,0-16*mmsize
 ;-------------------------------------------------------
 ; void idct8(const int16_t* src, int16_t* dst, intptr_t dstStride)
 ;-------------------------------------------------------
+%if ARCH_X86_64
+INIT_XMM sse2
+%if BIT_DEPTH == 10
+    %define     IDCT_SHIFT 10
+    %define     IDCT_ADD pd_512
+%elif BIT_DEPTH == 8
+    %define     IDCT_SHIFT 12
+    %define     IDCT_ADD pd_2048
+%else
+    %error Unsupported BIT_DEPTH!
+%endif
+
+cglobal idct8, 3, 6, 16, 0-5*mmsize
+    mova        m9, [r0 + 1 * mmsize]
+    mova        m1, [r0 + 3 * mmsize]
+    mova        m7, m9
+    punpcklwd   m7, m1
+    punpckhwd   m9, m1
+    mova        m14, [tab_idct8_3]
+    mova        m3, m14
+    pmaddwd     m14, m7
+    pmaddwd     m3, m9
+    mova        m0, [r0 + 5 * mmsize]
+    mova        m10, [r0 + 7 * mmsize]
+    mova        m2, m0
+    punpcklwd   m2, m10
+    punpckhwd   m0, m10
+    mova        m15, [tab_idct8_3 + 1 * mmsize]
+    mova        m11, [tab_idct8_3 + 1 * mmsize]
+    pmaddwd     m15, m2
+    mova        m4, [tab_idct8_3 + 2 * mmsize]
+    pmaddwd     m11, m0
+    mova        m1, [tab_idct8_3 + 2 * mmsize]
+    paddd       m15, m14
+    mova        m5, [tab_idct8_3 + 4 * mmsize]
+    mova        m12, [tab_idct8_3 + 4 * mmsize]
+    paddd       m11, m3
+    mova        [rsp + 0 * mmsize], m11
+    mova        [rsp + 1 * mmsize], m15
+    pmaddwd     m4, m7
+    pmaddwd     m1, m9
+    mova        m14, [tab_idct8_3 + 3 * mmsize]
+    mova        m3, [tab_idct8_3 + 3 * mmsize]
+    pmaddwd     m14, m2
+    pmaddwd     m3, m0
+    paddd       m14, m4
+    paddd       m3, m1
+    mova        [rsp + 2 * mmsize], m3
+    pmaddwd     m5, m9
+    pmaddwd     m9, [tab_idct8_3 + 6 * mmsize]
+    mova        m6, [tab_idct8_3 + 5 * mmsize]
+    pmaddwd     m12, m7
+    pmaddwd     m7, [tab_idct8_3 + 6 * mmsize]
+    mova        m4, [tab_idct8_3 + 5 * mmsize]
+    pmaddwd     m6, m2
+    paddd       m6, m12
+    pmaddwd     m2, [tab_idct8_3 + 7 * mmsize]
+    paddd       m7, m2
+    mova        [rsp + 3 * mmsize], m6
+    pmaddwd     m4, m0
+    pmaddwd     m0, [tab_idct8_3 + 7 * mmsize]
+    paddd       m9, m0
+    paddd       m5, m4
+    mova        m6, [r0 + 0 * mmsize]
+    mova        m0, [r0 + 4 * mmsize]
+    mova        m4, m6
+    punpcklwd   m4, m0
+    punpckhwd   m6, m0
+    mova        m12, [r0 + 2 * mmsize]
+    mova        m0, [r0 + 6 * mmsize]
+    mova        m13, m12
+    mova        m8, [tab_dct4]
+    punpcklwd   m13, m0
+    mova        m10, [tab_dct4]
+    punpckhwd   m12, m0
+    pmaddwd     m8, m4
+    mova        m3, m8
+    pmaddwd     m4, [tab_dct4 + 2 * mmsize]
+    pmaddwd     m10, m6
+    mova        m2, [tab_dct4 + 1 * mmsize]
+    mova        m1, m10
+    pmaddwd     m6, [tab_dct4 + 2 * mmsize]
+    mova        m0, [tab_dct4 + 1 * mmsize]
+    pmaddwd     m2, m13
+    paddd       m3, m2
+    psubd       m8, m2
+    mova        m2, m6
+    pmaddwd     m13, [tab_dct4 + 3 * mmsize]
+    pmaddwd     m0, m12
+    paddd       m1, m0
+    psubd       m10, m0
+    mova        m0, m4
+    pmaddwd     m12, [tab_dct4 + 3 * mmsize]
+    paddd       m3, [pd_64]
+    paddd       m1, [pd_64]
+    paddd       m8, [pd_64]
+    paddd       m10, [pd_64]
+    paddd       m0, m13
+    paddd       m2, m12
+    paddd       m0, [pd_64]
+    paddd       m2, [pd_64]
+    psubd       m4, m13
+    psubd       m6, m12
+    paddd       m4, [pd_64]
+    paddd       m6, [pd_64]
+    mova        m12, m8
+    psubd       m8, m7
+    psrad       m8, 7
+    paddd       m15, m3
+    psubd       m3, [rsp + 1 * mmsize]
+    psrad       m15, 7
+    paddd       m12, m7
+    psrad       m12, 7
+    paddd       m11, m1
+    mova        m13, m14
+    psrad       m11, 7
+    packssdw    m15, m11
+    psubd       m1, [rsp + 0 * mmsize]
+    psrad       m1, 7
+    mova        m11, [rsp + 2 * mmsize]
+    paddd       m14, m0
+    psrad       m14, 7
+    psubd       m0, m13
+    psrad       m0, 7
+    paddd       m11, m2
+    mova        m13, [rsp + 3 * mmsize]
+    psrad       m11, 7
+    packssdw    m14, m11
+    mova        m11, m6
+    psubd       m6, m5
+    paddd       m13, m4
+    psrad       m13, 7
+    psrad       m6, 7
+    paddd       m11, m5
+    psrad       m11, 7
+    packssdw    m13, m11
+    mova        m11, m10
+    psubd       m4, [rsp + 3 * mmsize]
+    psubd       m10, m9
+    psrad       m4, 7
+    psrad       m10, 7
+    packssdw    m4, m6
+    packssdw    m8, m10
+    paddd       m11, m9
+    psrad       m11, 7
+    packssdw    m12, m11
+    psubd       m2, [rsp + 2 * mmsize]
+    mova        m5, m15
+    psrad       m2, 7
+    packssdw    m0, m2
+    mova        m2, m14
+    psrad       m3, 7
+    packssdw    m3, m1
+    mova        m6, m13
+    punpcklwd   m5, m8
+    punpcklwd   m2, m4
+    mova        m1, m12
+    punpcklwd   m6, m0
+    punpcklwd   m1, m3
+    mova        m9, m5
+    punpckhwd   m13, m0
+    mova        m0, m2
+    punpcklwd   m9, m6
+    punpckhwd   m5, m6
+    punpcklwd   m0, m1
+    punpckhwd   m2, m1
+    punpckhwd   m15, m8
+    mova        m1, m5
+    punpckhwd   m14, m4
+    punpckhwd   m12, m3
+    mova        m6, m9
+    punpckhwd   m9, m0
+    punpcklwd   m1, m2
+    mova        m4, [tab_idct8_3 + 0 * mmsize]
+    punpckhwd   m5, m2
+    punpcklwd   m6, m0
+    mova        m2, m15
+    mova        m0, m14
+    mova        m7, m9
+    punpcklwd   m2, m13
+    punpcklwd   m0, m12
+    punpcklwd   m7, m5
+    punpckhwd   m14, m12
+    mova        m10, m2
+    punpckhwd   m15, m13
+    punpckhwd   m9, m5
+    pmaddwd     m4, m7
+    mova        m13, m1
+    punpckhwd   m2, m0
+    punpcklwd   m10, m0
+    mova        m0, m15
+    punpckhwd   m15, m14
+    mova        m12, m1
+    mova        m3, [tab_idct8_3 + 0 * mmsize]
+    punpcklwd   m0, m14
+    pmaddwd     m3, m9
+    mova        m11, m2
+    punpckhwd   m2, m15
+    punpcklwd   m11, m15
+    mova        m8, [tab_idct8_3 + 1 * mmsize]
+    punpcklwd   m13, m0
+    punpckhwd   m12, m0
+    pmaddwd     m8, m11
+    paddd       m8, m4
+    mova        [rsp + 4 * mmsize], m8
+    mova        m4, [tab_idct8_3 + 2 * mmsize]
+    pmaddwd     m4, m7
+    mova        m15, [tab_idct8_3 + 2 * mmsize]
+    mova        m5, [tab_idct8_3 + 1 * mmsize]
+    pmaddwd     m15, m9
+    pmaddwd     m5, m2
+    paddd       m5, m3
+    mova        [rsp + 3 * mmsize], m5
+    mova        m14, [tab_idct8_3 + 3 * mmsize]
+    mova        m5, [tab_idct8_3 + 3 * mmsize]
+    pmaddwd     m14, m11
+    paddd       m14, m4
+    mova        [rsp + 2 * mmsize], m14
+    pmaddwd     m5, m2
+    paddd       m5, m15
+    mova        [rsp + 1 * mmsize], m5
+    mova        m15, [tab_idct8_3 + 4 * mmsize]
+    mova        m5, [tab_idct8_3 + 4 * mmsize]
+    pmaddwd     m15, m7
+    pmaddwd     m7, [tab_idct8_3 + 6 * mmsize]
+    pmaddwd     m5, m9
+    pmaddwd     m9, [tab_idct8_3 + 6 * mmsize]
+    mova        m4, [tab_idct8_3 + 5 * mmsize]
+    pmaddwd     m4, m2
+    paddd       m5, m4
+    mova        m4, m6
+    mova        m8, [tab_idct8_3 + 5 * mmsize]
+    punpckhwd   m6, m10
+    pmaddwd     m2, [tab_idct8_3 + 7 * mmsize]
+    punpcklwd   m4, m10
+    paddd       m9, m2
+    pmaddwd     m8, m11
+    mova        m10, [tab_dct4]
+    paddd       m8, m15
+    pmaddwd     m11, [tab_idct8_3 + 7 * mmsize]
+    paddd       m7, m11
+    mova        [rsp + 0 * mmsize], m8
+    pmaddwd     m10, m6
+    pmaddwd     m6, [tab_dct4 + 2 * mmsize]
+    mova        m1, m10
+    mova        m8, [tab_dct4]
+    mova        m3, [tab_dct4 + 1 * mmsize]
+    pmaddwd     m8, m4
+    pmaddwd     m4, [tab_dct4 + 2 * mmsize]
+    mova        m0, m8
+    mova        m2, [tab_dct4 + 1 * mmsize]
+    pmaddwd     m3, m13
+    psubd       m8, m3
+    paddd       m0, m3
+    mova        m3, m6
+    pmaddwd     m13, [tab_dct4 + 3 * mmsize]
+    pmaddwd     m2, m12
+    paddd       m1, m2
+    psubd       m10, m2
+    mova        m2, m4
+    pmaddwd     m12, [tab_dct4 + 3 * mmsize]
+    paddd       m0, [IDCT_ADD]
+    paddd       m1, [IDCT_ADD]
+    paddd       m8, [IDCT_ADD]
+    paddd       m10, [IDCT_ADD]
+    paddd       m2, m13
+    paddd       m3, m12
+    paddd       m2, [IDCT_ADD]
+    paddd       m3, [IDCT_ADD]
+    psubd       m4, m13
+    psubd       m6, m12
+    paddd       m4, [IDCT_ADD]
+    paddd       m6, [IDCT_ADD]
+    mova        m15, [rsp + 4 * mmsize]
+    mova        m12, m8
+    psubd       m8, m7
+    psrad       m8, IDCT_SHIFT
+    mova        m11, [rsp + 3 * mmsize]
+    paddd       m15, m0
+    psrad       m15, IDCT_SHIFT
+    psubd       m0, [rsp + 4 * mmsize]
+    psrad       m0, IDCT_SHIFT
+    paddd       m12, m7
+    paddd       m11, m1
+    mova        m14, [rsp + 2 * mmsize]
+    psrad       m11, IDCT_SHIFT
+    packssdw    m15, m11
+    psubd       m1, [rsp + 3 * mmsize]
+    psrad       m1, IDCT_SHIFT
+    mova        m11, [rsp + 1 * mmsize]
+    paddd       m14, m2
+    psrad       m14, IDCT_SHIFT
+    packssdw    m0, m1
+    psrad       m12, IDCT_SHIFT
+    psubd       m2, [rsp + 2 * mmsize]
+    paddd       m11, m3
+    mova        m13, [rsp + 0 * mmsize]
+    psrad       m11, IDCT_SHIFT
+    packssdw    m14, m11
+    mova        m11, m6
+    psubd       m6, m5
+    paddd       m13, m4
+    psrad       m13, IDCT_SHIFT
+    mova        m1, m15
+    paddd       m11, m5
+    psrad       m11, IDCT_SHIFT
+    packssdw    m13, m11
+    mova        m11, m10
+    psubd       m10, m9
+    psrad       m10, IDCT_SHIFT
+    packssdw    m8, m10
+    psrad       m6, IDCT_SHIFT
+    psubd       m4, [rsp + 0 * mmsize]
+    paddd       m11, m9
+    psrad       m11, IDCT_SHIFT
+    packssdw    m12, m11
+    punpcklwd   m1, m14
+    mova        m5, m13
+    psrad       m4, IDCT_SHIFT
+    packssdw    m4, m6
+    psubd       m3, [rsp + 1 * mmsize]
+    psrad       m2, IDCT_SHIFT
+    mova        m6, m8
+    psrad       m3, IDCT_SHIFT
+    punpcklwd   m5, m12
+    packssdw    m2, m3
+    punpcklwd   m6, m4
+    punpckhwd   m8, m4
+    mova        m4, m1
+    mova        m3, m2
+    punpckhdq   m1, m5
+    punpckldq   m4, m5
+    punpcklwd   m3, m0
+    punpckhwd   m2, m0
+    mova        m0, m6
+    lea         r2, [r2 + r2]
+    lea         r4, [r2 + r2]
+    lea         r3, [r4 + r2]
+    lea         r4, [r4 + r3]
+    lea         r0, [r4 + r2 * 2]
+    movq        [r1], m4
+    punpckhwd   m15, m14
+    movhps      [r1 + r2], m4
+    punpckhdq   m0, m3
+    movq        [r1 + r2 * 2], m1
+    punpckhwd   m13, m12
+    movhps      [r1 + r3], m1
+    mova        m1, m6
+    punpckldq   m1, m3
+    movq        [r1 + 8], m1
+    movhps      [r1 + r2 + 8], m1
+    movq        [r1 + r2 * 2 + 8], m0
+    movhps      [r1 + r3 + 8], m0
+    mova        m0, m15
+    punpckhdq   m15, m13
+    punpckldq   m0, m13
+    movq        [r1 + r2 * 4], m0
+    movhps      [r1 + r4], m0
+    mova        m0, m8
+    punpckhdq   m8, m2
+    movq        [r1 + r3 * 2], m15
+    punpckldq   m0, m2
+    movhps      [r1 + r0], m15
+    movq        [r1 + r2 * 4 + 8], m0
+    movhps      [r1 + r4 + 8], m0
+    movq        [r1 + r3 * 2 + 8], m8
+    movhps      [r1 + r0 + 8], m8
+    RET
+
+%undef IDCT_SHIFT
+%undef IDCT_ADD
+%endif
+
+;-------------------------------------------------------
+; void idct8(const int16_t* src, int16_t* dst, intptr_t dstStride)
+;-------------------------------------------------------
 INIT_XMM ssse3
 
 cglobal patial_butterfly_inverse_internal_pass1
@@ -1185,7 +2206,7 @@ cglobal denoise_dct, 4, 4, 6
     mova     [r1 + 16], m2
 
     movu     m3, [r2]
-    psubsw   m1, m3
+    psubusw  m1, m3
     pcmpgtw  m4, m1, m5
     pand     m1, m4
     psignw   m1, m0
@@ -1214,7 +2235,7 @@ cglobal denoise_dct, 4, 4, 6
     paddd    m2, m3
     movu     [r1 + 32], m2
     movu     m3, [r2]
-    psubw    m1, m3
+    psubusw  m1, m3
     pcmpgtw  m4, m1, m5
     pand     m1, m4
     psignw   m1, m0

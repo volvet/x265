@@ -26,23 +26,26 @@
 #include "picyuv.h"
 #include "framedata.h"
 
-using namespace x265;
+using namespace X265_NS;
 
 Frame::Frame()
 {
     m_bChromaExtended = false;
+    m_lowresInit = false;
     m_reconRowCount.set(0);
     m_countRefEncoders = 0;
     m_encData = NULL;
     m_reconPic = NULL;
     m_next = NULL;
     m_prev = NULL;
+    m_param = NULL;
     memset(&m_lowres, 0, sizeof(m_lowres));
 }
 
 bool Frame::create(x265_param *param)
 {
     m_fencPic = new PicYuv;
+    m_param = param;
 
     return m_fencPic->create(param->sourceWidth, param->sourceHeight, param->internalCsp) &&
            m_lowres.create(m_fencPic, param->bframes, !!param->rc.aqMode);
@@ -59,9 +62,9 @@ bool Frame::allocEncodeData(x265_param *param, const SPS& sps)
         /* initialize right border of m_reconpicYuv as SAO may read beyond the
          * end of the picture accessing uninitialized pixels */
         int maxHeight = sps.numCuInHeight * g_maxCUSize;
-        memset(m_reconPic->m_picOrg[0], 0, m_reconPic->m_stride * maxHeight);
-        memset(m_reconPic->m_picOrg[1], 0, m_reconPic->m_strideC * (maxHeight >> m_reconPic->m_vChromaShift));
-        memset(m_reconPic->m_picOrg[2], 0, m_reconPic->m_strideC * (maxHeight >> m_reconPic->m_vChromaShift));
+        memset(m_reconPic->m_picOrg[0], 0, sizeof(pixel) * m_reconPic->m_stride * maxHeight);
+        memset(m_reconPic->m_picOrg[1], 0, sizeof(pixel) * m_reconPic->m_strideC * (maxHeight >> m_reconPic->m_vChromaShift));
+        memset(m_reconPic->m_picOrg[2], 0, sizeof(pixel) * m_reconPic->m_strideC * (maxHeight >> m_reconPic->m_vChromaShift));
     }
     return ok;
 }

@@ -26,27 +26,36 @@
 
 #include "primitives.h"
 #include "common.h"
+#include "picyuv.h"
 #include "mv.h"
 
-namespace x265 {
+namespace X265_NS {
 // private namespace
-
-class PicYuv;
 
 struct ReferencePlanes
 {
     ReferencePlanes() { memset(this, 0, sizeof(ReferencePlanes)); }
 
-    pixel*   fpelPlane;
+    pixel*   fpelPlane[3];
     pixel*   lowresPlane[4];
+    PicYuv*  reconPic;
 
     bool     isWeighted;
     bool     isLowres;
+
     intptr_t lumaStride;
-    int      weight;
-    int      offset;
-    int      shift;
-    int      round;
+    intptr_t chromaStride;
+
+    struct {
+        int      weight;
+        int      offset;
+        int      shift;
+        int      round;
+    } w[3];
+
+    pixel* getLumaAddr(uint32_t ctuAddr, uint32_t absPartIdx) { return fpelPlane[0] + reconPic->m_cuOffsetY[ctuAddr] + reconPic->m_buOffsetY[absPartIdx]; }
+    pixel* getCbAddr(uint32_t ctuAddr, uint32_t absPartIdx)   { return fpelPlane[1] + reconPic->m_cuOffsetC[ctuAddr] + reconPic->m_buOffsetC[absPartIdx]; }
+    pixel* getCrAddr(uint32_t ctuAddr, uint32_t absPartIdx)   { return fpelPlane[2] + reconPic->m_cuOffsetC[ctuAddr] + reconPic->m_buOffsetC[absPartIdx]; }
 
     /* lowres motion compensation, you must provide a buffer and stride for QPEL averaged pixels
      * in case QPEL is required.  Else it returns a pointer to the HPEL pixels */
@@ -60,7 +69,7 @@ struct ReferencePlanes
             int qmvy = qmv.y + (qmv.y & 1);
             int hpelB = (qmvy & 2) | ((qmvx & 2) >> 1);
             pixel *frefB = lowresPlane[hpelB] + blockOffset + (qmvx >> 2) + (qmvy >> 2) * lumaStride;
-            primitives.pixelavg_pp[LUMA_8x8](buf, outstride, frefA, lumaStride, frefB, lumaStride, 32);
+            primitives.pu[LUMA_8x8].pixelavg_pp(buf, outstride, frefA, lumaStride, frefB, lumaStride, 32);
             return buf;
         }
         else
@@ -82,7 +91,7 @@ struct ReferencePlanes
             int qmvy = qmv.y + (qmv.y & 1);
             int hpelB = (qmvy & 2) | ((qmvx & 2) >> 1);
             pixel *frefB = lowresPlane[hpelB] + blockOffset + (qmvx >> 2) + (qmvy >> 2) * lumaStride;
-            primitives.pixelavg_pp[LUMA_8x8](subpelbuf, 8, frefA, lumaStride, frefB, lumaStride, 32);
+            primitives.pu[LUMA_8x8].pixelavg_pp(subpelbuf, 8, frefA, lumaStride, frefB, lumaStride, 32);
             return comp(fenc, FENC_STRIDE, subpelbuf, 8);
         }
         else
@@ -105,7 +114,6 @@ struct Lowres : public ReferencePlanes
     int    lines;            // height of lowres frame in pixel lines
     int    leadingBframes;   // number of leading B frames for P or I
 
-    bool   bIntraCalculated;
     bool   bScenecut;        // Set to false if the frame cannot possibly be part of a real scenecut.
     bool   bKeyframe;
     bool   bLastMiniGopBFrame;
@@ -122,6 +130,8 @@ struct Lowres : public ReferencePlanes
     uint16_t(*lowresCosts[X265_BFRAME_MAX + 2][X265_BFRAME_MAX + 2]);
     int32_t*  lowresMvCosts[2][X265_BFRAME_MAX + 1];
     MV*       lowresMvs[2][X265_BFRAME_MAX + 1];
+    uint32_t  maxBlocksInRow;
+    uint32_t  maxBlocksInCol;
 
     /* used for vbvLookahead */
     int       plannedType[X265_LOOKAHEAD_MAX + 1];
@@ -142,7 +152,7 @@ struct Lowres : public ReferencePlanes
 
     bool create(PicYuv *origPic, int _bframes, bool bAqEnabled);
     void destroy();
-    void init(PicYuv *origPic, int poc, int sliceType);
+    void init(PicYuv *origPic, int poc);
 };
 }
 

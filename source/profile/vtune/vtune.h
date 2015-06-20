@@ -1,5 +1,5 @@
 /*****************************************************************************
- * Copyright (C) 2013 x265 project
+ * Copyright (C) 2015 x265 project
  *
  * Authors: Steve Borho <steve@borho.org>
  *
@@ -21,51 +21,33 @@
  * For more information, contact us at license @ x265.com.
  *****************************************************************************/
 
-#ifndef _PPA_H_
-#define _PPA_H_
+#ifndef VTUNE_H
+#define VTUNE_H
 
-#if !defined(ENABLE_PPA)
+#include "ittnotify.h"
 
-#define PPA_INIT()
-#define PPAStartCpuEventFunc(e)
-#define PPAStopCpuEventFunc(e)
-#define PPAScopeEvent(e)
+namespace X265_NS {
 
-#else
-
-/* declare enum list of users CPU events */
-#define PPA_REGISTER_CPU_EVENT(x) x,
-enum PPACpuEventEnum
+#define CPU_EVENT(x) x,
+enum VTuneTasksEnum
 {
-#include "ppaCPUEvents.h"
-    PPACpuGroupNums
+#include "../cpuEvents.h"
+    NUM_VTUNE_TASKS
+};
+#undef CPU_EVENT
+
+extern __itt_domain* domain;
+extern __itt_string_handle* taskHandle[NUM_VTUNE_TASKS];
+
+struct VTuneScopeEvent
+{
+    VTuneScopeEvent(int e) { __itt_task_begin(domain, __itt_null, __itt_null, taskHandle[e]); }
+    ~VTuneScopeEvent()     { __itt_task_end(domain); }
 };
 
-#undef PPA_REGISTER_CPU_EVENT
+void vtuneInit();
+void vtuneSetThreadName(const char *name, int id);
 
-#define PPA_INIT()               initializePPA()
-#define PPAStartCpuEventFunc(e)  if (ppabase) ppabase->triggerStartEvent(ppabase->getEventId(e))
-#define PPAStopCpuEventFunc(e)   if (ppabase) ppabase->triggerEndEvent(ppabase->getEventId(e))
-#define PPAScopeEvent(e)         _PPAScope __scope_(e)
+}
 
-#include "ppaApi.h"
-
-void initializePPA();
-extern ppa::Base *ppabase;
-
-class _PPAScope
-{
-protected:
-
-    ppa::EventID m_id;
-
-public:
-
-    _PPAScope(int e) { if (ppabase) { m_id = ppabase->getEventId(e); ppabase->triggerStartEvent(m_id); } else m_id = 0; }
-
-    ~_PPAScope()     { if (ppabase) ppabase->triggerEndEvent(m_id); }
-};
-
-#endif // if !defined(ENABLE_PPA)
-
-#endif /* _PPA_H_ */
+#endif

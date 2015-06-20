@@ -27,15 +27,15 @@
 #include "primitives.h"
 #include "x265.h"
 
-using namespace x265;
+using namespace X265_NS;
 
 #if _MSC_VER
 #pragma warning(disable: 4127) // conditional expression is constant, typical for templated functions
 #endif
 
 namespace {
-template<int dstStride>
-void filterConvertPelToShort_c(const pixel* src, intptr_t srcStride, int16_t* dst, int width, int height)
+template<int width, int height>
+void filterPixelToShort_c(const pixel* src, intptr_t srcStride, int16_t* dst, intptr_t dstStride)
 {
     int shift = IF_INTERNAL_PREC - X265_DEPTH;
     int row, col;
@@ -65,8 +65,8 @@ void extendCURowColBorder(pixel* txt, intptr_t stride, int width, int height, in
         }
 
 #else
-        ::memset(txt - marginX, txt[0], marginX);
-        ::memset(txt + width, txt[width - 1], marginX);
+        memset(txt - marginX, txt[0], marginX);
+        memset(txt + width, txt[width - 1], marginX);
 #endif
 
         txt += stride;
@@ -369,43 +369,47 @@ void interp_hv_pp_c(const pixel* src, intptr_t srcStride, pixel* dst, intptr_t d
 }
 }
 
-namespace x265 {
+namespace X265_NS {
 // x265 private namespace
 
 #define CHROMA_420(W, H) \
-    p.chroma[X265_CSP_I420].filter_hpp[CHROMA_ ## W ## x ## H] = interp_horiz_pp_c<4, W, H>; \
-    p.chroma[X265_CSP_I420].filter_hps[CHROMA_ ## W ## x ## H] = interp_horiz_ps_c<4, W, H>; \
-    p.chroma[X265_CSP_I420].filter_vpp[CHROMA_ ## W ## x ## H] = interp_vert_pp_c<4, W, H>;  \
-    p.chroma[X265_CSP_I420].filter_vps[CHROMA_ ## W ## x ## H] = interp_vert_ps_c<4, W, H>;  \
-    p.chroma[X265_CSP_I420].filter_vsp[CHROMA_ ## W ## x ## H] = interp_vert_sp_c<4, W, H>;  \
-    p.chroma[X265_CSP_I420].filter_vss[CHROMA_ ## W ## x ## H] = interp_vert_ss_c<4, W, H>;
+    p.chroma[X265_CSP_I420].pu[CHROMA_420_ ## W ## x ## H].filter_hpp = interp_horiz_pp_c<4, W, H>; \
+    p.chroma[X265_CSP_I420].pu[CHROMA_420_ ## W ## x ## H].filter_hps = interp_horiz_ps_c<4, W, H>; \
+    p.chroma[X265_CSP_I420].pu[CHROMA_420_ ## W ## x ## H].filter_vpp = interp_vert_pp_c<4, W, H>;  \
+    p.chroma[X265_CSP_I420].pu[CHROMA_420_ ## W ## x ## H].filter_vps = interp_vert_ps_c<4, W, H>;  \
+    p.chroma[X265_CSP_I420].pu[CHROMA_420_ ## W ## x ## H].filter_vsp = interp_vert_sp_c<4, W, H>;  \
+    p.chroma[X265_CSP_I420].pu[CHROMA_420_ ## W ## x ## H].filter_vss = interp_vert_ss_c<4, W, H>; \
+    p.chroma[X265_CSP_I420].pu[CHROMA_420_ ## W ## x ## H].p2s = filterPixelToShort_c<W, H>;
 
 #define CHROMA_422(W, H) \
-    p.chroma[X265_CSP_I422].filter_hpp[CHROMA422_ ## W ## x ## H] = interp_horiz_pp_c<4, W, H>; \
-    p.chroma[X265_CSP_I422].filter_hps[CHROMA422_ ## W ## x ## H] = interp_horiz_ps_c<4, W, H>; \
-    p.chroma[X265_CSP_I422].filter_vpp[CHROMA422_ ## W ## x ## H] = interp_vert_pp_c<4, W, H>;  \
-    p.chroma[X265_CSP_I422].filter_vps[CHROMA422_ ## W ## x ## H] = interp_vert_ps_c<4, W, H>;  \
-    p.chroma[X265_CSP_I422].filter_vsp[CHROMA422_ ## W ## x ## H] = interp_vert_sp_c<4, W, H>;  \
-    p.chroma[X265_CSP_I422].filter_vss[CHROMA422_ ## W ## x ## H] = interp_vert_ss_c<4, W, H>;
+    p.chroma[X265_CSP_I422].pu[CHROMA_422_ ## W ## x ## H].filter_hpp = interp_horiz_pp_c<4, W, H>; \
+    p.chroma[X265_CSP_I422].pu[CHROMA_422_ ## W ## x ## H].filter_hps = interp_horiz_ps_c<4, W, H>; \
+    p.chroma[X265_CSP_I422].pu[CHROMA_422_ ## W ## x ## H].filter_vpp = interp_vert_pp_c<4, W, H>;  \
+    p.chroma[X265_CSP_I422].pu[CHROMA_422_ ## W ## x ## H].filter_vps = interp_vert_ps_c<4, W, H>;  \
+    p.chroma[X265_CSP_I422].pu[CHROMA_422_ ## W ## x ## H].filter_vsp = interp_vert_sp_c<4, W, H>;  \
+    p.chroma[X265_CSP_I422].pu[CHROMA_422_ ## W ## x ## H].filter_vss = interp_vert_ss_c<4, W, H>; \
+    p.chroma[X265_CSP_I422].pu[CHROMA_422_ ## W ## x ## H].p2s = filterPixelToShort_c<W, H>;
 
 #define CHROMA_444(W, H) \
-    p.chroma[X265_CSP_I444].filter_hpp[LUMA_ ## W ## x ## H] = interp_horiz_pp_c<4, W, H>; \
-    p.chroma[X265_CSP_I444].filter_hps[LUMA_ ## W ## x ## H] = interp_horiz_ps_c<4, W, H>; \
-    p.chroma[X265_CSP_I444].filter_vpp[LUMA_ ## W ## x ## H] = interp_vert_pp_c<4, W, H>;  \
-    p.chroma[X265_CSP_I444].filter_vps[LUMA_ ## W ## x ## H] = interp_vert_ps_c<4, W, H>;  \
-    p.chroma[X265_CSP_I444].filter_vsp[LUMA_ ## W ## x ## H] = interp_vert_sp_c<4, W, H>;  \
-    p.chroma[X265_CSP_I444].filter_vss[LUMA_ ## W ## x ## H] = interp_vert_ss_c<4, W, H>;
+    p.chroma[X265_CSP_I444].pu[LUMA_ ## W ## x ## H].filter_hpp = interp_horiz_pp_c<4, W, H>; \
+    p.chroma[X265_CSP_I444].pu[LUMA_ ## W ## x ## H].filter_hps = interp_horiz_ps_c<4, W, H>; \
+    p.chroma[X265_CSP_I444].pu[LUMA_ ## W ## x ## H].filter_vpp = interp_vert_pp_c<4, W, H>;  \
+    p.chroma[X265_CSP_I444].pu[LUMA_ ## W ## x ## H].filter_vps = interp_vert_ps_c<4, W, H>;  \
+    p.chroma[X265_CSP_I444].pu[LUMA_ ## W ## x ## H].filter_vsp = interp_vert_sp_c<4, W, H>;  \
+    p.chroma[X265_CSP_I444].pu[LUMA_ ## W ## x ## H].filter_vss = interp_vert_ss_c<4, W, H>; \
+    p.chroma[X265_CSP_I444].pu[LUMA_ ## W ## x ## H].p2s = filterPixelToShort_c<W, H>;
 
 #define LUMA(W, H) \
-    p.luma_hpp[LUMA_ ## W ## x ## H]     = interp_horiz_pp_c<8, W, H>; \
-    p.luma_hps[LUMA_ ## W ## x ## H]     = interp_horiz_ps_c<8, W, H>; \
-    p.luma_vpp[LUMA_ ## W ## x ## H]     = interp_vert_pp_c<8, W, H>;  \
-    p.luma_vps[LUMA_ ## W ## x ## H]     = interp_vert_ps_c<8, W, H>;  \
-    p.luma_vsp[LUMA_ ## W ## x ## H]     = interp_vert_sp_c<8, W, H>;  \
-    p.luma_vss[LUMA_ ## W ## x ## H]     = interp_vert_ss_c<8, W, H>;  \
-    p.luma_hvpp[LUMA_ ## W ## x ## H]    = interp_hv_pp_c<8, W, H>;
+    p.pu[LUMA_ ## W ## x ## H].luma_hpp     = interp_horiz_pp_c<8, W, H>; \
+    p.pu[LUMA_ ## W ## x ## H].luma_hps     = interp_horiz_ps_c<8, W, H>; \
+    p.pu[LUMA_ ## W ## x ## H].luma_vpp     = interp_vert_pp_c<8, W, H>;  \
+    p.pu[LUMA_ ## W ## x ## H].luma_vps     = interp_vert_ps_c<8, W, H>;  \
+    p.pu[LUMA_ ## W ## x ## H].luma_vsp     = interp_vert_sp_c<8, W, H>;  \
+    p.pu[LUMA_ ## W ## x ## H].luma_vss     = interp_vert_ss_c<8, W, H>;  \
+    p.pu[LUMA_ ## W ## x ## H].luma_hvpp    = interp_hv_pp_c<8, W, H>; \
+    p.pu[LUMA_ ## W ## x ## H].convert_p2s = filterPixelToShort_c<W, H>;
 
-void Setup_C_IPFilterPrimitives(EncoderPrimitives& p)
+void setupFilterPrimitives_c(EncoderPrimitives& p)
 {
     LUMA(4, 4);
     LUMA(8, 8);
@@ -459,6 +463,7 @@ void Setup_C_IPFilterPrimitives(EncoderPrimitives& p)
 
     CHROMA_422(4, 8);
     CHROMA_422(4, 4);
+    CHROMA_422(2, 4);
     CHROMA_422(2, 8);
     CHROMA_422(8,  16);
     CHROMA_422(8,  8);
@@ -507,11 +512,6 @@ void Setup_C_IPFilterPrimitives(EncoderPrimitives& p)
     CHROMA_444(48, 64);
     CHROMA_444(64, 16);
     CHROMA_444(16, 64);
-    p.luma_p2s = filterConvertPelToShort_c<MAX_CU_SIZE>;
-
-    p.chroma_p2s[X265_CSP_I444] = filterConvertPelToShort_c<MAX_CU_SIZE>;
-    p.chroma_p2s[X265_CSP_I420] = filterConvertPelToShort_c<MAX_CU_SIZE / 2>;
-    p.chroma_p2s[X265_CSP_I422] = filterConvertPelToShort_c<MAX_CU_SIZE / 2>;
 
     p.extendRowBorder = extendCURowColBorder;
 }

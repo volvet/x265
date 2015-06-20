@@ -31,12 +31,14 @@
 #include "contexts.h"
 #include "slice.h"
 
-namespace x265 {
+namespace X265_NS {
 // private namespace
 
 struct SaoCtuParam;
 struct EstBitsSbac;
 class ScalingList;
+
+static const uint32_t g_puOffset[8] = { 0, 8, 4, 4, 2, 10, 1, 5 };
 
 enum SplitType
 {
@@ -87,9 +89,8 @@ struct TURecurse
 struct EstBitsSbac
 {
     int significantCoeffGroupBits[NUM_SIG_CG_FLAG_CTX][2];
-    int significantBits[NUM_SIG_FLAG_CTX][2];
-    int lastXBits[10];
-    int lastYBits[10];
+    int significantBits[2][NUM_SIG_FLAG_CTX];
+    int lastBits[2][10];
     int greaterOneBits[NUM_ONE_FLAG_CTX][2];
     int levelAbsBits[NUM_ABS_FLAG_CTX][2];
     int blockCbpBits[NUM_QT_CBF_CTX][2];
@@ -143,9 +144,9 @@ public:
     void codeVPS(const VPS& vps);
     void codeSPS(const SPS& sps, const ScalingList& scalingList, const ProfileTierLevel& ptl);
     void codePPS(const PPS& pps);
-    void codeVUI(const VUI& vui);
+    void codeVUI(const VUI& vui, int maxSubTLayers);
     void codeAUD(const Slice& slice);
-    void codeHrdParameters(const HRDInfo& hrd);
+    void codeHrdParameters(const HRDInfo& hrd, int maxSubTLayers);
 
     void codeSliceHeader(const Slice& slice, FrameData& encData);
     void codeSliceHeaderWPPEntryPoints(const Slice& slice, const uint32_t *substreamSizes, uint32_t maxOffset);
@@ -162,9 +163,10 @@ public:
 
     void codePartSize(const CUData& cu, uint32_t absPartIdx, uint32_t depth);
     void codePredInfo(const CUData& cu, uint32_t absPartIdx);
-    void codeQtCbf(const CUData& cu, uint32_t absPartIdx, uint32_t absPartIdxStep, uint32_t width, uint32_t height, TextType ttype, uint32_t trDepth, bool lowestLevel);
-    void codeQtCbf(const CUData& cu, uint32_t absPartIdx, TextType ttype, uint32_t trDepth);
-    void codeCoeff(const CUData& cu, uint32_t absPartIdx, uint32_t depth, bool& bCodeDQP, uint32_t depthRange[2]);
+    inline void codeQtCbfLuma(const CUData& cu, uint32_t absPartIdx, uint32_t tuDepth) { codeQtCbfLuma(cu.getCbf(absPartIdx, TEXT_LUMA, tuDepth), tuDepth); }
+
+    void codeQtCbfChroma(const CUData& cu, uint32_t absPartIdx, TextType ttype, uint32_t tuDepth, bool lowestLevel);
+    void codeCoeff(const CUData& cu, uint32_t absPartIdx, bool& bCodeDQP, const uint32_t depthRange[2]);
     void codeCoeffNxN(const CUData& cu, const coeff_t* coef, uint32_t absPartIdx, uint32_t log2TrSize, TextType ttype);
 
     inline void codeSaoMerge(uint32_t code)                          { encodeBin(code, m_contextState[OFF_SAO_MERGE_FLAG_CTX]); }
@@ -175,9 +177,11 @@ public:
     inline void codeTransformSubdivFlag(uint32_t symbol, uint32_t ctx)    { encodeBin(symbol, m_contextState[OFF_TRANS_SUBDIV_FLAG_CTX + ctx]); }
     inline void codePredMode(int predMode)                                { encodeBin(predMode == MODE_INTRA ? 1 : 0, m_contextState[OFF_PRED_MODE_CTX]); }
     inline void codeCUTransquantBypassFlag(uint32_t symbol)               { encodeBin(symbol, m_contextState[OFF_TQUANT_BYPASS_FLAG_CTX]); }
-    inline void codeQtCbf(uint32_t cbf, TextType ttype, uint32_t trDepth) { encodeBin(cbf, m_contextState[OFF_QT_CBF_CTX + ctxCbf[ttype][trDepth]]); }
+    inline void codeQtCbfLuma(uint32_t cbf, uint32_t tuDepth)             { encodeBin(cbf, m_contextState[OFF_QT_CBF_CTX + !tuDepth]); }
+    inline void codeQtCbfChroma(uint32_t cbf, uint32_t tuDepth)           { encodeBin(cbf, m_contextState[OFF_QT_CBF_CTX + 2 + tuDepth]); }
     inline void codeQtRootCbf(uint32_t cbf)                               { encodeBin(cbf, m_contextState[OFF_QT_ROOT_CBF_CTX]); }
-
+    inline void codeTransformSkipFlags(uint32_t transformSkip, TextType ttype) { encodeBin(transformSkip, m_contextState[OFF_TRANSFORMSKIP_FLAG_CTX + (ttype ? NUM_TRANSFORMSKIP_FLAG_CTX : 0)]); }
+    void codeDeltaQP(const CUData& cu, uint32_t absPartIdx);
     void codeSaoOffset(const SaoCtuParam& ctuParam, int plane);
 
     /* RDO functions */
@@ -189,11 +193,16 @@ public:
 
     inline uint32_t bitsIntraModeNonMPM() const { return bitsCodeBin(0, m_contextState[OFF_ADI_CTX]) + 5; }
     inline uint32_t bitsIntraModeMPM(const uint32_t preds[3], uint32_t dir) const { return bitsCodeBin(1, m_contextState[OFF_ADI_CTX]) + (dir == preds[0] ? 1 : 2); }
-    inline uint32_t estimateCbfBits(uint32_t cbf, TextType ttype, uint32_t trDepth) const { return bitsCodeBin(cbf, m_contextState[OFF_QT_CBF_CTX + ctxCbf[ttype][trDepth]]); }
+    inline uint32_t estimateCbfBits(uint32_t cbf, TextType ttype, uint32_t tuDepth) const { return bitsCodeBin(cbf, m_contextState[OFF_QT_CBF_CTX + ctxCbf[ttype][tuDepth]]); }
+    uint32_t bitsInterMode(const CUData& cu, uint32_t absPartIdx, uint32_t depth) const;
+    uint32_t bitsIntraMode(const CUData& cu, uint32_t absPartIdx) const
+    {
+        return bitsCodeBin(0, m_contextState[OFF_SKIP_FLAG_CTX + cu.getCtxSkipFlag(absPartIdx)]) + /* not skip */
+               bitsCodeBin(1, m_contextState[OFF_PRED_MODE_CTX]); /* intra */
+    }
 
     /* these functions are only used to estimate the bits when cbf is 0 and will never be called when writing the bistream. */
     inline void codeQtRootCbfZero() { encodeBin(0, m_contextState[OFF_QT_ROOT_CBF_CTX]); }
-    inline void codeQtCbfZero(TextType ttype, uint32_t trDepth) { encodeBin(0, m_contextState[OFF_QT_CBF_CTX + ctxCbf[ttype][trDepth]]); }
 
 private:
 
@@ -214,7 +223,7 @@ private:
     }
 
     void encodeCU(const CUData& ctu, const CUGeom &cuGeom, uint32_t absPartIdx, uint32_t depth, bool& bEncodeDQP);
-    void finishCU(const CUData& ctu, uint32_t absPartIdx, uint32_t depth);
+    void finishCU(const CUData& ctu, uint32_t absPartIdx, uint32_t depth, bool bEncodeDQP);
 
     void writeOut();
 
@@ -223,7 +232,7 @@ private:
     void writeEpExGolomb(uint32_t symbol, uint32_t count);
     void writeCoefRemainExGolomb(uint32_t symbol, const uint32_t absGoRice);
 
-    void codeProfileTier(const ProfileTierLevel& ptl);
+    void codeProfileTier(const ProfileTierLevel& ptl, int maxTempSubLayers);
     void codeScalingList(const ScalingList&);
     void codeScalingList(const ScalingList& scalingList, uint32_t sizeId, uint32_t listId);
 
@@ -235,20 +244,10 @@ private:
 
     void codeSaoMaxUvlc(uint32_t code, uint32_t maxSymbol);
 
-    void codeDeltaQP(const CUData& cu, uint32_t absPartIdx);
     void codeLastSignificantXY(uint32_t posx, uint32_t posy, uint32_t log2TrSize, bool bIsLuma, uint32_t scanIdx);
-    void codeTransformSkipFlags(const CUData& cu, uint32_t absPartIdx, uint32_t trSize, TextType ttype);
 
-    struct CoeffCodeState
-    {
-        uint32_t bakAbsPartIdx;
-        uint32_t bakChromaOffset;
-        uint32_t bakAbsPartIdxCU;
-    };
-
-    void encodeTransform(const CUData& cu, CoeffCodeState& state, uint32_t offsetLumaOffset, uint32_t offsetChroma,
-                         uint32_t absPartIdx, uint32_t absPartIdxStep, uint32_t depth, uint32_t log2TrSize, uint32_t trIdx,
-                         bool& bCodeDQP, uint32_t depthRange[2]);
+    void encodeTransform(const CUData& cu, uint32_t absPartIdx, uint32_t tuDepth, uint32_t log2TrSize,
+                         bool& bCodeDQP, const uint32_t depthRange[2]);
 
     void copyFrom(const Entropy& src);
     void copyContextsFrom(const Entropy& src);

@@ -24,6 +24,8 @@
 #include "filters.h"
 #include "common.h"
 
+using namespace X265_NS;
+
 /* The dithering algorithm is based on Sierra-2-4A error diffusion. */
 void ditherPlane(pixel *dst, int dstStride, uint16_t *src, int srcStride,
                  int width, int height, int16_t *errors, int bitDepth)
@@ -41,7 +43,7 @@ void ditherPlane(pixel *dst, int dstStride, uint16_t *src, int srcStride,
         for (int x = 0; x < width; x++)
         {
             err = err * 2 + errors[x] + errors[x + 1];
-            dst[x * pitch] = (pixel)Clip3(0, pixelMax, ((src[x * 1] << 2) + err + half) >> rShift);
+            dst[x * pitch] = (pixel)x265_clip3(0, pixelMax, ((src[x * 1] << 2) + err + half) >> rShift);
             errors[x] = err = src[x * pitch] - (dst[x * pitch] << lShift);
         }
     }

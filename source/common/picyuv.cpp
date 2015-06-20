@@ -1,5 +1,5 @@
 /*****************************************************************************
- * Copyright (C) 2014 x265 project
+ * Copyright (C) 2015 x265 project
  *
  * Authors: Steve Borho <steve@borho.org>
  *
@@ -26,7 +26,7 @@
 #include "slice.h"
 #include "primitives.h"
 
-using namespace x265;
+using namespace X265_NS;
 
 PicYuv::PicYuv()
 {
@@ -84,7 +84,7 @@ fail:
  * allocated by the same encoder. */
 bool PicYuv::createOffsets(const SPS& sps)
 {
-    uint32_t numPartitions = 1 << (g_maxFullDepth * 2);
+    uint32_t numPartitions = 1 << (g_unitSizeDepth * 2);
     CHECKED_MALLOC(m_cuOffsetY, intptr_t, sps.numCuInWidth * sps.numCuInHeight);
     CHECKED_MALLOC(m_cuOffsetC, intptr_t, sps.numCuInWidth * sps.numCuInHeight);
     for (uint32_t cuRow = 0; cuRow < sps.numCuInHeight; cuRow++)
@@ -175,10 +175,7 @@ void PicYuv::copyFromPicture(const x265_picture& pic, int padx, int pady)
 
         for (int r = 0; r < height; r++)
         {
-            for (int c = 0; c < width; c++)
-            {
-                yPixel[c] = (pixel)yChar[c];
-            }
+            memcpy(yPixel, yChar, width * sizeof(pixel));
 
             yPixel += m_stride;
             yChar += pic.stride[0] / sizeof(*yChar);
@@ -186,11 +183,8 @@ void PicYuv::copyFromPicture(const x265_picture& pic, int padx, int pady)
 
         for (int r = 0; r < height >> m_vChromaShift; r++)
         {
-            for (int c = 0; c < width >> m_hChromaShift; c++)
-            {
-                uPixel[c] = (pixel)uChar[c];
-                vPixel[c] = (pixel)vChar[c];
-            }
+            memcpy(uPixel, uChar, (width >> m_hChromaShift) * sizeof(pixel));
+            memcpy(vPixel, vChar, (width >> m_hChromaShift) * sizeof(pixel));
 
             uPixel += m_strideC;
             vPixel += m_strideC;
@@ -229,9 +223,7 @@ void PicYuv::copyFromPicture(const x265_picture& pic, int padx, int pady)
         for (int r = 0; r < height; r++)
         {
             for (int x = 0; x < padx; x++)
-            {
                 Y[width + x] = Y[width - 1];
-            }
 
             Y += m_stride;
         }
@@ -257,9 +249,7 @@ void PicYuv::copyFromPicture(const x265_picture& pic, int padx, int pady)
         pixel *V = m_picOrg[2] + ((height >> m_vChromaShift) - 1) * m_strideC;
 
         for (int i = 1; i <= pady; i++)
-        {
             memcpy(Y + i * m_stride, Y, (width + padx) * sizeof(pixel));
-        }
 
         for (int j = 1; j <= pady >> m_vChromaShift; j++)
         {
@@ -269,7 +259,7 @@ void PicYuv::copyFromPicture(const x265_picture& pic, int padx, int pady)
     }
 }
 
-namespace x265 {
+namespace X265_NS {
 
 template<uint32_t OUTPUT_BITDEPTH_DIV8>
 static void md5_block(MD5Context& md5, const pixel* plane, uint32_t n)

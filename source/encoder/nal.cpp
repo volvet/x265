@@ -25,7 +25,7 @@
 #include "bitstream.h"
 #include "nal.h"
 
-using namespace x265;
+using namespace X265_NS;
 
 NALList::NALList()
     : m_numNal(0)
@@ -35,6 +35,7 @@ NALList::NALList()
     , m_extraBuffer(NULL)
     , m_extraOccupancy(0)
     , m_extraAllocSize(0)
+    , m_annexB(true)
 {}
 
 void NALList::takeContents(NALList& other)
@@ -90,7 +91,12 @@ void NALList::serialize(NalUnitType nalUnitType, const Bitstream& bs)
     uint8_t *out = m_buffer + m_occupancy;
     uint32_t bytes = 0;
 
-    if (!m_numNal || nalUnitType == NAL_UNIT_SPS || nalUnitType == NAL_UNIT_PPS)
+    if (!m_annexB)
+    {
+        /* Will write size later */
+        bytes += 4;
+    }
+    else if (!m_numNal || nalUnitType == NAL_UNIT_VPS || nalUnitType == NAL_UNIT_SPS || nalUnitType == NAL_UNIT_PPS)
     {
         memcpy(out, startCodePrefix, 4);
         bytes += 4;
@@ -107,7 +113,7 @@ void NALList::serialize(NalUnitType nalUnitType, const Bitstream& bs)
      * nuh_reserved_zero_6bits  6-bits
      * nuh_temporal_id_plus1    3-bits */
     out[bytes++] = (uint8_t)nalUnitType << 1;
-    out[bytes++] = 1;
+    out[bytes++] = 1 + (nalUnitType == NAL_UNIT_CODED_SLICE_TSA_N);
 
     /* 7.4.1 ...
      * Within the NAL unit, the following three-byte sequences shall not occur at
@@ -144,6 +150,16 @@ void NALList::serialize(NalUnitType nalUnitType, const Bitstream& bs)
      * to 0x03 is appended to the end of the data.  */
     if (!out[bytes - 1])
         out[bytes++] = 0x03;
+
+    if (!m_annexB)
+    {
+        uint32_t dataSize = bytes - 4;
+        out[0] = (uint8_t)(dataSize >> 24);
+        out[1] = (uint8_t)(dataSize >> 16);
+        out[2] = (uint8_t)(dataSize >> 8);
+        out[3] = (uint8_t)dataSize;
+    }
+
     m_occupancy += bytes;
 
     X265_CHECK(m_numNal < (uint32_t)MAX_NAL_UNITS, "NAL count overflow\n");
@@ -193,12 +209,10 @@ uint32_t NALList::serializeSubstreams(uint32_t* streamSizeBytes, uint32_t stream
         {
             for (uint32_t i = 0; i < inSize; i++)
             {
-                if (bytes > 2 && !out[bytes - 2] && !out[bytes - 3] && out[bytes - 1] <= 0x03)
+                if (bytes >= 2 && !out[bytes - 2] && !out[bytes - 1] && inBytes[i] <= 0x03)
                 {
                     /* inject 0x03 to prevent emulating a start code */
-                    out[bytes] = out[bytes - 1];
-                    out[bytes - 1] = 0x03;
-                    bytes++;
+                    out[bytes++] = 3;
                 }
 
                 out[bytes++] = inBytes[i];

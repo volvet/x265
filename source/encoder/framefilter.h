@@ -30,7 +30,7 @@
 #include "deblock.h"
 #include "sao.h"
 
-namespace x265 {
+namespace X265_NS {
 // private x265 namespace
 
 class Encoder;
@@ -39,7 +39,7 @@ class FrameEncoder;
 struct ThreadLocalData;
 
 // Manages the processing of a single frame loopfilter
-class FrameFilter
+class FrameFilter : public Deblock
 {
 public:
 
@@ -50,7 +50,6 @@ public:
     int           m_vChromaShift;
     int           m_pad[2];
 
-    Deblock       m_deblock;
     SAO           m_sao;
     int           m_numRows;
     int           m_saoRowDelay;

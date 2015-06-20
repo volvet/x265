@@ -36,7 +36,7 @@
 #endif
 #endif
 
-using namespace x265;
+using namespace X265_NS;
 using namespace std;
 
 YUVInput::YUVInput(InputFileInfo& info)
@@ -44,8 +44,6 @@ YUVInput::YUVInput(InputFileInfo& info)
     for (int i = 0; i < QUEUE_SIZE; i++)
         buf[i] = NULL;
 
-    readCount.set(0);
-    writeCount.set(0);
     depth = info.depth;
     width = info.width;
     height = info.height;
@@ -152,7 +150,7 @@ YUVInput::~YUVInput()
 void YUVInput::release()
 {
     threadActive = false;
-    readCount.set(readCount.get()); // unblock read thread
+    readCount.poke();
     stop();
     delete this;
 }
@@ -167,6 +165,7 @@ void YUVInput::startReader()
 
 void YUVInput::threadMain()
 {
+    THREAD_NAME("YUVRead", 0);
     while (threadActive)
     {
         if (!populateFrameQueue())
@@ -174,7 +173,7 @@ void YUVInput::threadMain()
     }
 
     threadActive = false;
-    writeCount.set(writeCount.get()); // unblock readPicture
+    writeCount.poke();
 }
 
 bool YUVInput::populateFrameQueue()
@@ -193,6 +192,7 @@ bool YUVInput::populateFrameQueue()
             return false;
     }
 
+    ProfileScopeEvent(frameRead);
     ifs->read(buf[written % QUEUE_SIZE], framesize);
     if (ifs->good())
     {

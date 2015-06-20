@@ -23,8 +23,15 @@
 
 #include "threading.h"
 
-namespace x265 {
+namespace X265_NS {
 // x265 private namespace
+
+#if X265_ARCH_X86 && !defined(X86_64) && ENABLE_ASSEMBLY && defined(__GNUC__)
+extern "C" intptr_t x265_stack_align(void (*func)(), ...);
+#define x265_stack_align(func, ...) x265_stack_align((void (*)())func, __VA_ARGS__)
+#else
+#define x265_stack_align(func, ...) func(__VA_ARGS__)
+#endif
 
 /* C shim for forced stack alignment */
 static void stackAlignMain(Thread *instance)

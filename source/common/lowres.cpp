@@ -25,7 +25,7 @@
 #include "lowres.h"
 #include "mv.h"
 
-using namespace x265;
+using namespace X265_NS;
 
 bool Lowres::create(PicYuv *origPic, int _bframes, bool bAQEnabled)
 {
@@ -36,13 +36,13 @@ bool Lowres::create(PicYuv *origPic, int _bframes, bool bAQEnabled)
     lumaStride = width + 2 * origPic->m_lumaMarginX;
     if (lumaStride & 31)
         lumaStride += 32 - (lumaStride & 31);
-    int cuWidth = (width + X265_LOWRES_CU_SIZE - 1) >> X265_LOWRES_CU_BITS;
-    int cuHeight = (lines + X265_LOWRES_CU_SIZE - 1) >> X265_LOWRES_CU_BITS;
-    int cuCount = cuWidth * cuHeight;
+    maxBlocksInRow = (width + X265_LOWRES_CU_SIZE - 1) >> X265_LOWRES_CU_BITS;
+    maxBlocksInCol = (lines + X265_LOWRES_CU_SIZE - 1) >> X265_LOWRES_CU_BITS;
+    int cuCount = maxBlocksInRow * maxBlocksInCol;
 
     /* rounding the width to multiple of lowres CU size */
-    width = cuWidth * X265_LOWRES_CU_SIZE;
-    lines = cuHeight * X265_LOWRES_CU_SIZE;
+    width = maxBlocksInRow * X265_LOWRES_CU_SIZE;
+    lines = maxBlocksInCol * X265_LOWRES_CU_SIZE;
 
     size_t planesize = lumaStride * (lines + 2 * origPic->m_lumaMarginY);
     size_t padoffset = lumaStride * origPic->m_lumaMarginY + origPic->m_lumaMarginX;
@@ -56,12 +56,11 @@ bool Lowres::create(PicYuv *origPic, int _bframes, bool bAQEnabled)
     CHECKED_MALLOC(propagateCost, uint16_t, cuCount);
 
     /* allocate lowres buffers */
-    for (int i = 0; i < 4; i++)
-    {
-        CHECKED_MALLOC(buffer[i], pixel, planesize);
-        /* initialize the whole buffer to prevent valgrind warnings on right edge */
-        memset(buffer[i], 0, sizeof(pixel) * planesize);
-    }
+    CHECKED_MALLOC_ZERO(buffer[0], pixel, 4 * planesize);
+
+    buffer[1] = buffer[0] + planesize;
+    buffer[2] = buffer[1] + planesize;
+    buffer[3] = buffer[2] + planesize;
 
     lowresPlane[0] = buffer[0] + padoffset;
     lowresPlane[1] = buffer[1] + padoffset;
@@ -75,7 +74,7 @@ bool Lowres::create(PicYuv *origPic, int _bframes, bool bAQEnabled)
     {
         for (int j = 0; j < bframes + 2; j++)
         {
-            CHECKED_MALLOC(rowSatds[i][j], int32_t, cuHeight);
+            CHECKED_MALLOC(rowSatds[i][j], int32_t, maxBlocksInCol);
             CHECKED_MALLOC(lowresCosts[i][j], uint16_t, cuCount);
         }
     }
@@ -96,9 +95,7 @@ fail:
 
 void Lowres::destroy()
 {
-    for (int i = 0; i < 4; i++)
-        X265_FREE(buffer[i]);
-
+    X265_FREE(buffer[0]);
     X265_FREE(intraCost);
     X265_FREE(intraMode);
 
@@ -126,13 +123,11 @@ void Lowres::destroy()
 }
 
 // (re) initialize lowres state
-void Lowres::init(PicYuv *origPic, int poc, int type)
+void Lowres::init(PicYuv *origPic, int poc)
 {
-    bIntraCalculated = false;
     bLastMiniGopBFrame = false;
     bScenecut = true;  // could be a scene-cut, until ruled out by flash detection
     bKeyframe = false; // Not a keyframe unless identified by lookahead
-    sliceType = type;
     frameNum = poc;
     leadingBframes = 0;
     indB = 0;
@@ -157,14 +152,14 @@ void Lowres::init(PicYuv *origPic, int poc, int type)
         intraMbs[i] = 0;
 
     /* downscale and generate 4 hpel planes for lookahead */
-    primitives.frame_init_lowres_core(origPic->m_picOrg[0],
-                                      lowresPlane[0], lowresPlane[1], lowresPlane[2], lowresPlane[3],
-                                      origPic->m_stride, lumaStride, width, lines);
+    primitives.frameInitLowres(origPic->m_picOrg[0],
+                               lowresPlane[0], lowresPlane[1], lowresPlane[2], lowresPlane[3],
+                               origPic->m_stride, lumaStride, width, lines);
 
     /* extend hpel planes for motion search */
     extendPicBorder(lowresPlane[0], lumaStride, width, lines, origPic->m_lumaMarginX, origPic->m_lumaMarginY);
     extendPicBorder(lowresPlane[1], lumaStride, width, lines, origPic->m_lumaMarginX, origPic->m_lumaMarginY);
     extendPicBorder(lowresPlane[2], lumaStride, width, lines, origPic->m_lumaMarginX, origPic->m_lumaMarginY);
     extendPicBorder(lowresPlane[3], lumaStride, width, lines, origPic->m_lumaMarginX, origPic->m_lumaMarginY);
-    fpelPlane = lowresPlane[0];
+    fpelPlane[0] = lowresPlane[0];
 }

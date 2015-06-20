@@ -2,6 +2,7 @@
  * Copyright (C) 2013 x265 project
  *
  * Authors: Dnyaneshwar Gorade <dnyaneshwar@multicorewareinc.com>
+ *          Praveen Kumar Tiwari <praveen@multicorewareinc.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,6 +25,21 @@
 #ifndef X265_LOOPFILTER_H
 #define X265_LOOPFILTER_H
 
-void x265_saoCuOrgE0_sse4(pixel * rec, int8_t * offsetEo, int endX, int8_t signLeft);
+#define DECL_SAO(cpu) \
+    void PFX(saoCuOrgE0_ ## cpu)(pixel * rec, int8_t * offsetEo, int endX, int8_t* signLeft, intptr_t stride); \
+    void PFX(saoCuOrgE1_ ## cpu)(pixel* rec, int8_t* upBuff1, int8_t* offsetEo, intptr_t stride, int width); \
+    void PFX(saoCuOrgE1_2Rows_ ## cpu)(pixel* rec, int8_t* upBuff1, int8_t* offsetEo, intptr_t stride, int width); \
+    void PFX(saoCuOrgE2_ ## cpu)(pixel* rec, int8_t* pBufft, int8_t* pBuff1, int8_t* offsetEo, int lcuWidth, intptr_t stride); \
+    void PFX(saoCuOrgE2_ ## cpu)(pixel* rec, int8_t* pBufft, int8_t* pBuff1, int8_t* offsetEo, int lcuWidth, intptr_t stride); \
+    void PFX(saoCuOrgE2_32_ ## cpu)(pixel* rec, int8_t* pBufft, int8_t* pBuff1, int8_t* offsetEo, int lcuWidth, intptr_t stride); \
+    void PFX(saoCuOrgE3_ ## cpu)(pixel *rec, int8_t *upBuff1, int8_t *m_offsetEo, intptr_t stride, int startX, int endX); \
+    void PFX(saoCuOrgE3_32_ ## cpu)(pixel *rec, int8_t *upBuff1, int8_t *m_offsetEo, intptr_t stride, int startX, int endX); \
+    void PFX(saoCuOrgB0_ ## cpu)(pixel* rec, const int8_t* offsetBo, int ctuWidth, int ctuHeight, intptr_t stride); \
+    void PFX(saoCuStatsE2_ ## cpu)(const pixel *fenc, const pixel *rec, intptr_t stride, int8_t *upBuff1, int8_t *upBufft, int endX, int endY, int32_t *stats, int32_t *count); \
+    void PFX(saoCuStatsE3_ ## cpu)(const pixel *fenc, const pixel *rec, intptr_t stride, int8_t *upBuff1, int endX, int endY, int32_t *stats, int32_t *count); \
+    void PFX(calSign_ ## cpu)(int8_t *dst, const pixel *src1, const pixel *src2, const int endX);
+
+DECL_SAO(sse4);
+DECL_SAO(avx2);
 
 #endif // ifndef X265_LOOPFILTER_H

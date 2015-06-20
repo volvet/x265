@@ -29,10 +29,10 @@
 
 #include <fstream>
 
-namespace x265 {
+namespace X265_NS {
 // private x265 namespace
 
-class YUVOutput : public Output
+class YUVOutput : public ReconFile
 {
 protected:
 

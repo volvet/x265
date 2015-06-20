@@ -27,7 +27,7 @@
 #include "common.h"
 #include "primitives.h"
 
-namespace x265 {
+namespace X265_NS {
 // private x265 namespace
 
 #if _MSC_VER
@@ -56,11 +56,16 @@ public:
 
     MV& operator >>=(int i)                    { x >>= i; y >>= i; return *this; }
 
+#if USING_FTRAPV
+    /* avoid signed left-shifts when -ftrapv is enabled */
+    MV& operator <<=(int i)                    { x *= (1 << i); y *= (1 << i); return *this; }
+    MV operator <<(int i) const                { return MV(x * (1 << i), y * (1 << i)); }
+#else
     MV& operator <<=(int i)                    { x <<= i; y <<= i; return *this; }
+    MV operator <<(int i) const                { return MV(x << i, y << i); }
+#endif
 
     MV operator >>(int i) const                { return MV(x >> i, y >> i); }
-
-    MV operator <<(int i) const                { return MV(x << i, y << i); }
 
     MV operator *(int16_t i) const             { return MV(x * i, y * i); }
 

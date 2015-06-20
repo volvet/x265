@@ -41,7 +41,7 @@
 #include "reference.h"
 #include "nal.h"
 
-namespace x265 {
+namespace X265_NS {
 // private x265 namespace
 
 class ThreadPool;
@@ -62,11 +62,6 @@ struct StatisticLog
     uint64_t cntSkipCu[4];
     uint64_t cntTotalCu[4];
     uint64_t totalCu;
-
-    /* These states store the count of inter,intra and skip ctus within quad tree structure of each CU */
-    uint32_t qTreeInterCnt[4];
-    uint32_t qTreeIntraCnt[4];
-    uint32_t qTreeSkipCnt[4];
 
     StatisticLog()
     {
@@ -122,7 +117,7 @@ public:
 
     virtual ~FrameEncoder() {}
 
-    bool init(Encoder *top, int numRows, int numCols, int id);
+    virtual bool init(Encoder *top, int numRows, int numCols);
 
     void destroy();
 
@@ -134,11 +129,20 @@ public:
 
     Event                    m_enable;
     Event                    m_done;
-    bool                     m_threadActive;
+    Event                    m_completionEvent;
+    int                      m_localTldIdx;
 
-    int                      m_numRows;
+    volatile bool            m_threadActive;
+    volatile bool            m_bAllRowsStop;
+    volatile int             m_completionCount;
+    volatile int             m_vbvResetTriggerRow;
+
+    uint32_t                 m_numRows;
     uint32_t                 m_numCols;
-    int                      m_refLagRows;
+    uint32_t                 m_filterRowDelay;
+    uint32_t                 m_filterRowDelayCus;
+    uint32_t                 m_refLagRows;
+
     CTURow*                  m_rows;
     RateControlEntry         m_rce;
     SEIDecodedPictureHash    m_seiReconPictureDigest;
@@ -147,17 +151,30 @@ public:
     uint64_t                 m_SSDU;
     uint64_t                 m_SSDV;
     double                   m_ssim;
+    uint64_t                 m_accessUnitBits;
     uint32_t                 m_ssimCnt;
     MD5Context               m_state[3];
     uint32_t                 m_crc[3];
     uint32_t                 m_checksum[3];
-    double                   m_elapsedCompressTime; // elapsed time spent in worker threads
-    double                   m_frameTime;           // wall time from frame start to finish
     StatisticLog             m_sliceTypeLog[3];     // per-slice type CU statistics
-    FrameStats               m_frameStats;          // stats of current frame for multi-pass encodes
-    volatile bool            m_bAllRowsStop;
-    volatile int             m_vbvResetTriggerRow;
-    uint64_t                 m_accessUnitBits;
+
+    volatile int             m_activeWorkerCount;        // count of workers currently encoding or filtering CTUs
+    volatile int             m_totalActiveWorkerCount;   // sum of m_activeWorkerCount sampled at end of each CTU
+    volatile int             m_activeWorkerCountSamples; // count of times m_activeWorkerCount was sampled (think vbv restarts)
+    volatile int             m_countRowBlocks;           // count of workers forced to abandon a row because of top dependency
+    int64_t                  m_startCompressTime;        // timestamp when frame encoder is given a frame
+    int64_t                  m_row0WaitTime;             // timestamp when row 0 is allowed to start
+    int64_t                  m_allRowsAvailableTime;     // timestamp when all reference dependencies are resolved
+    int64_t                  m_endCompressTime;          // timestamp after all CTUs are compressed
+    int64_t                  m_endFrameTime;             // timestamp after RCEnd, NR updates, etc
+    int64_t                  m_stallStartTime;           // timestamp when worker count becomes 0
+    int64_t                  m_prevOutputTime;           // timestamp when prev frame was retrieved by API thread
+    int64_t                  m_slicetypeWaitTime;        // total elapsed time waiting for decided frame
+    int64_t                  m_totalWorkerElapsedTime;   // total elapsed time spent by worker threads processing CTUs
+    int64_t                  m_totalNoWorkerTime;        // total elapsed time without any active worker threads
+#if DETAILED_CU_STATS
+    CUStats                  m_cuStats;
+#endif
 
     Encoder*                 m_top;
     x265_param*              m_param;
@@ -177,11 +194,20 @@ public:
     FrameFilter              m_frameFilter;
     NALList                  m_nalList;
 
-    int                      m_filterRowDelay;
-    int                      m_filterRowDelayCus;
-    Event                    m_completionEvent;
-    int64_t                  m_totalTime;
-    int                      m_frameEncoderID;
+    class WeightAnalysis : public BondedTaskGroup
+    {
+    public:
+
+        FrameEncoder& master;
+
+        WeightAnalysis(FrameEncoder& fe) : master(fe) {}
+
+        void processTasks(int workerThreadId);
+
+    protected:
+
+        WeightAnalysis operator=(const WeightAnalysis&);
+    };
 
 protected:
 
@@ -190,20 +216,17 @@ protected:
     /* analyze / compress frame, can be run in parallel within reference constraints */
     void compressFrame();
 
-    /* called by compressFrame to perform wave-front compression analysis */
-    void compressCTURows();
-
     /* called by compressFrame to generate final per-row bitstreams */
     void encodeSlice();
 
     void threadMain();
-    int  calcQpForCu(uint32_t cuAddr, double baseQp);
-    void collectCTUStatistics(CUData& ctu);
+    int  collectCTUStatistics(const CUData& ctu, uint32_t* qtreeInterCnt, uint32_t* qtreeIntraCnt, uint32_t* qtreeSkipCnt);
+    int  calcCTUQP(const CUData& ctu);
     void noiseReductionUpdate();
 
     /* Called by WaveFront::findJob() */
-    void processRow(int row, int threadId);
-    void processRowEncoder(int row, ThreadLocalData& tld);
+    virtual void processRow(int row, int threadId);
+    virtual void processRowEncoder(int row, ThreadLocalData& tld);
 
     void enqueueRowEncoder(int row) { WaveFront::enqueueRow(row * 2 + 0); }
     void enqueueRowFilter(int row)  { WaveFront::enqueueRow(row * 2 + 1); }

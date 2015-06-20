@@ -27,11 +27,11 @@
 #include "frame.h"
 #include "picyuv.h"
 #include "lowres.h"
+#include "slice.h"
 #include "mv.h"
-#include "slicetype.h"
 #include "bitstream.h"
 
-using namespace x265;
+using namespace X265_NS;
 namespace {
 struct Cache
 {
@@ -58,6 +58,7 @@ int sliceHeaderCost(WeightParam *w, int lambda, int bChroma)
 void mcLuma(pixel* mcout, Lowres& ref, const MV * mvs)
 {
     intptr_t stride = ref.lumaStride;
+    const int mvshift = 1 << 2;
     const int cuSize = 8;
     MV mvmin, mvmax;
 
@@ -66,21 +67,21 @@ void mcLuma(pixel* mcout, Lowres& ref, const MV * mvs)
     for (int y = 0; y < ref.lines; y += cuSize)
     {
         intptr_t pixoff = y * stride;
-        mvmin.y = (int16_t)((-y - 8) << 2);
-        mvmax.y = (int16_t)((ref.lines - y - 1 + 8) << 2);
+        mvmin.y = (int16_t)((-y - 8) * mvshift);
+        mvmax.y = (int16_t)((ref.lines - y - 1 + 8) * mvshift);
 
         for (int x = 0; x < ref.width; x += cuSize, pixoff += cuSize, cu++)
         {
             ALIGN_VAR_16(pixel, buf8x8[8 * 8]);
             intptr_t bstride = 8;
-            mvmin.x = (int16_t)((-x - 8) << 2);
-            mvmax.x = (int16_t)((ref.width - x - 1 + 8) << 2);
+            mvmin.x = (int16_t)((-x - 8) * mvshift);
+            mvmax.x = (int16_t)((ref.width - x - 1 + 8) * mvshift);
 
             /* clip MV to available pixels */
             MV mv = mvs[cu];
             mv = mv.clipped(mvmin, mvmax);
             pixel *tmp = ref.lowresMC(pixoff, mv, buf8x8, bstride);
-            primitives.luma_copy_pp[LUMA_8x8](mcout + pixoff, stride, tmp, bstride);
+            primitives.cu[BLOCK_8x8].copy_pp(mcout + pixoff, stride, tmp, bstride);
         }
     }
 }
@@ -100,6 +101,7 @@ void mcChroma(pixel *      mcout,
     int csp = cache.csp;
     int bw = 16 >> cache.hshift;
     int bh = 16 >> cache.vshift;
+    const int mvshift = 1 << 2;
     MV mvmin, mvmax;
 
     for (int y = 0; y < height; y += bh)
@@ -109,8 +111,8 @@ void mcChroma(pixel *      mcout,
          * into the lowres structures */
         int cu = y * cache.lowresWidthInCU;
         intptr_t pixoff = y * stride;
-        mvmin.y = (int16_t)((-y - 8) << 2);
-        mvmax.y = (int16_t)((height - y - 1 + 8) << 2);
+        mvmin.y = (int16_t)((-y - 8) * mvshift);
+        mvmax.y = (int16_t)((height - y - 1 + 8) * mvshift);
 
         for (int x = 0; x < width; x += bw, cu++, pixoff += bw)
         {
@@ -122,8 +124,8 @@ void mcChroma(pixel *      mcout,
                 mv.y >>= cache.vshift;
 
                 /* clip MV to available pixels */
-                mvmin.x = (int16_t)((-x - 8) << 2);
-                mvmax.x = (int16_t)((width - x - 1 + 8) << 2);
+                mvmin.x = (int16_t)((-x - 8) * mvshift);
+                mvmax.x = (int16_t)((width - x - 1 + 8) * mvshift);
                 mv = mv.clipped(mvmin, mvmax);
 
                 intptr_t fpeloffset = (mv.y >> 2) * stride + (mv.x >> 2);
@@ -133,26 +135,26 @@ void mcChroma(pixel *      mcout,
                 int yFrac = mv.y & 0x7;
                 if ((yFrac | xFrac) == 0)
                 {
-                    primitives.chroma[csp].copy_pp[LUMA_16x16](mcout + pixoff, stride, temp, stride);
+                    primitives.chroma[csp].pu[LUMA_16x16].copy_pp(mcout + pixoff, stride, temp, stride);
                 }
                 else if (yFrac == 0)
                 {
-                    primitives.chroma[csp].filter_hpp[LUMA_16x16](temp, stride, mcout + pixoff, stride, xFrac);
+                    primitives.chroma[csp].pu[LUMA_16x16].filter_hpp(temp, stride, mcout + pixoff, stride, xFrac);
                 }
                 else if (xFrac == 0)
                 {
-                    primitives.chroma[csp].filter_vpp[LUMA_16x16](temp, stride, mcout + pixoff, stride, yFrac);
+                    primitives.chroma[csp].pu[LUMA_16x16].filter_vpp(temp, stride, mcout + pixoff, stride, yFrac);
                 }
                 else
                 {
                     ALIGN_VAR_16(int16_t, imm[16 * (16 + NTAPS_CHROMA)]);
-                    primitives.chroma[csp].filter_hps[LUMA_16x16](temp, stride, imm, bw, xFrac, 1);
-                    primitives.chroma[csp].filter_vsp[LUMA_16x16](imm + ((NTAPS_CHROMA >> 1) - 1) * bw, bw, mcout + pixoff, stride, yFrac);
+                    primitives.chroma[csp].pu[LUMA_16x16].filter_hps(temp, stride, imm, bw, xFrac, 1);
+                    primitives.chroma[csp].pu[LUMA_16x16].filter_vsp(imm + ((NTAPS_CHROMA >> 1) - 1) * bw, bw, mcout + pixoff, stride, yFrac);
                 }
             }
             else
             {
-                primitives.chroma[csp].copy_pp[LUMA_16x16](mcout + pixoff, stride, src + pixoff, stride);
+                primitives.chroma[csp].pu[LUMA_16x16].copy_pp(mcout + pixoff, stride, src + pixoff, stride);
             }
         }
     }
@@ -193,29 +195,29 @@ uint32_t weightCost(pixel *         fenc,
     if (bLuma)
     {
         int cu = 0;
-        for (int y = 8; y < height; y += 8, r += 8 * stride, f += 8 * stride)
+        for (int y = 0; y < height; y += 8, r += 8 * stride, f += 8 * stride)
         {
-            for (int x = 8; x < width; x += 8, cu++)
+            for (int x = 0; x < width; x += 8, cu++)
             {
-                int cmp = primitives.satd[LUMA_8x8](r + x, stride, f + x, stride);
+                int cmp = primitives.pu[LUMA_8x8].satd(r + x, stride, f + x, stride);
                 cost += X265_MIN(cmp, cache.intraCost[cu]);
             }
         }
     }
     else if (cache.csp == X265_CSP_I444)
-        for (int y = 16; y < height; y += 16, r += 16 * stride, f += 16 * stride)
-            for (int x = 16; x < width; x += 16)
-                cost += primitives.satd[LUMA_16x16](r + x, stride, f + x, stride);
+        for (int y = 0; y < height; y += 16, r += 16 * stride, f += 16 * stride)
+            for (int x = 0; x < width; x += 16)
+                cost += primitives.pu[LUMA_16x16].satd(r + x, stride, f + x, stride);
     else
-        for (int y = 8; y < height; y += 8, r += 8 * stride, f += 8 * stride)
-            for (int x = 8; x < width; x += 8)
-                cost += primitives.satd[LUMA_8x8](r + x, stride, f + x, stride);
+        for (int y = 0; y < height; y += 8, r += 8 * stride, f += 8 * stride)
+            for (int x = 0; x < width; x += 8)
+                cost += primitives.pu[LUMA_8x8].satd(r + x, stride, f + x, stride);
 
     return cost;
 }
 }
 
-namespace x265 {
+namespace X265_NS {
 void weightAnalyse(Slice& slice, Frame& frame, x265_param& param)
 {
     WeightParam wp[2][MAX_NUM_REF][3];
@@ -303,7 +305,7 @@ void weightAnalyse(Slice& slice, Frame& frame, x265_param& param)
 
             if (plane)
             {
-                int scale = Clip3(0, 255, (int)(guessScale[plane] * (1 << denom) + 0.5f));
+                int scale = x265_clip3(0, 255, (int)(guessScale[plane] * (1 << denom) + 0.5f));
                 if (scale > 127)
                     continue;
                 weights[plane].inputWeight = scale;
@@ -381,9 +383,9 @@ void weightAnalyse(Slice& slice, Frame& frame, x265_param& param)
                 break;
 
             case 2:
-                fref = refFrame->m_fencPic->m_picOrg[2];
                 orig = fencPic->m_picOrg[2];
                 stride = fencPic->m_strideC;
+                fref = refFrame->m_fencPic->m_picOrg[2];
                 width =  ((fencPic->m_picWidth  >> 4) << 4) >> cache.hshift;
                 height = ((fencPic->m_picHeight >> 4) << 4) >> cache.vshift;
                 if (mvs)
@@ -413,8 +415,8 @@ void weightAnalyse(Slice& slice, Frame& frame, x265_param& param)
             static const int scaleDist = 4;
             static const int offsetDist = 2;
 
-            int startScale = Clip3(0, 127, minscale - scaleDist);
-            int endScale   = Clip3(0, 127, minscale + scaleDist);
+            int startScale = x265_clip3(0, 127, minscale - scaleDist);
+            int endScale   = x265_clip3(0, 127, minscale + scaleDist);
             for (int scale = startScale; scale <= endScale; scale++)
             {
                 int deltaWeight = scale - (1 << mindenom);
@@ -429,13 +431,13 @@ void weightAnalyse(Slice& slice, Frame& frame, x265_param& param)
                     /* Rescale considering the constraints on curOffset. We do it in this order
                      * because scale has a much wider range than offset (because of denom), so
                      * it should almost never need to be clamped. */
-                    curOffset = Clip3(-128, 127, curOffset);
+                    curOffset = x265_clip3(-128, 127, curOffset);
                     curScale = (int)((1 << mindenom) * (fencMean[plane] - curOffset) / refMean[plane] + 0.5f);
-                    curScale = Clip3(0, 127, curScale);
+                    curScale = x265_clip3(0, 127, curScale);
                 }
 
-                int startOffset = Clip3(-128, 127, curOffset - offsetDist);
-                int endOffset   = Clip3(-128, 127, curOffset + offsetDist);
+                int startOffset = x265_clip3(-128, 127, curOffset - offsetDist);
+                int endOffset   = x265_clip3(-128, 127, curOffset + offsetDist);
                 for (int off = startOffset; off <= endOffset; off++)
                 {
                     WeightParam wsp;

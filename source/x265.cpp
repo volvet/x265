@@ -27,198 +27,39 @@
 
 #include "input/input.h"
 #include "output/output.h"
+#include "output/reconplay.h"
 #include "filters/filters.h"
 #include "common.h"
 #include "param.h"
 #include "cpu.h"
 #include "x265.h"
+#include "x265cli.h"
 
 #if HAVE_VLD
 /* Visual Leak Detector */
 #include <vld.h>
 #endif
-#include "PPA/ppa.h"
 
 #include <signal.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <getopt.h>
 
 #include <string>
 #include <ostream>
 #include <fstream>
+#include <queue>
 
+#define CONSOLE_TITLE_SIZE 200
 #ifdef _WIN32
 #include <windows.h>
+static char orgConsoleTitle[CONSOLE_TITLE_SIZE] = "";
 #else
 #define GetConsoleTitle(t, n)
 #define SetConsoleTitle(t)
+#define SetThreadExecutionState(es)
 #endif
 
-using namespace x265;
-
-static const char short_options[] = "o:p:f:F:r:I:i:b:s:t:q:m:hwV?";
-static const struct option long_options[] =
-{
-    { "help",                 no_argument, NULL, 'h' },
-    { "version",              no_argument, NULL, 'V' },
-    { "asm",            required_argument, NULL, 0 },
-    { "no-asm",               no_argument, NULL, 0 },
-    { "threads",        required_argument, NULL, 0 },
-    { "preset",         required_argument, NULL, 'p' },
-    { "tune",           required_argument, NULL, 't' },
-    { "frame-threads",  required_argument, NULL, 'F' },
-    { "no-pmode",             no_argument, NULL, 0 },
-    { "pmode",                no_argument, NULL, 0 },
-    { "no-pme",               no_argument, NULL, 0 },
-    { "pme",                  no_argument, NULL, 0 },
-    { "log-level",      required_argument, NULL, 0 },
-    { "profile",        required_argument, NULL, 0 },
-    { "level-idc",      required_argument, NULL, 0 },
-    { "high-tier",            no_argument, NULL, 0 },
-    { "no-high-tier",         no_argument, NULL, 0 },
-    { "csv",            required_argument, NULL, 0 },
-    { "no-cu-stats",          no_argument, NULL, 0 },
-    { "cu-stats",             no_argument, NULL, 0 },
-    { "y4m",                  no_argument, NULL, 0 },
-    { "no-progress",          no_argument, NULL, 0 },
-    { "output",         required_argument, NULL, 'o' },
-    { "input",          required_argument, NULL, 0 },
-    { "input-depth",    required_argument, NULL, 0 },
-    { "input-res",      required_argument, NULL, 0 },
-    { "input-csp",      required_argument, NULL, 0 },
-    { "interlace",      required_argument, NULL, 0 },
-    { "no-interlace",         no_argument, NULL, 0 },
-    { "fps",            required_argument, NULL, 0 },
-    { "seek",           required_argument, NULL, 0 },
-    { "frame-skip",     required_argument, NULL, 0 },
-    { "frames",         required_argument, NULL, 'f' },
-    { "recon",          required_argument, NULL, 'r' },
-    { "recon-depth",    required_argument, NULL, 0 },
-    { "no-wpp",               no_argument, NULL, 0 },
-    { "wpp",                  no_argument, NULL, 0 },
-    { "ctu",            required_argument, NULL, 's' },
-    { "tu-intra-depth", required_argument, NULL, 0 },
-    { "tu-inter-depth", required_argument, NULL, 0 },
-    { "me",             required_argument, NULL, 0 },
-    { "subme",          required_argument, NULL, 'm' },
-    { "merange",        required_argument, NULL, 0 },
-    { "max-merge",      required_argument, NULL, 0 },
-    { "no-temporal-mvp",      no_argument, NULL, 0 },
-    { "temporal-mvp",         no_argument, NULL, 0 },
-    { "rdpenalty",      required_argument, NULL, 0 },
-    { "no-rect",              no_argument, NULL, 0 },
-    { "rect",                 no_argument, NULL, 0 },
-    { "no-amp",               no_argument, NULL, 0 },
-    { "amp",                  no_argument, NULL, 0 },
-    { "no-early-skip",        no_argument, NULL, 0 },
-    { "early-skip",           no_argument, NULL, 0 },
-    { "no-fast-cbf",          no_argument, NULL, 0 },
-    { "fast-cbf",             no_argument, NULL, 0 },
-    { "no-tskip",             no_argument, NULL, 0 },
-    { "tskip",                no_argument, NULL, 0 },
-    { "no-tskip-fast",        no_argument, NULL, 0 },
-    { "tskip-fast",           no_argument, NULL, 0 },
-    { "cu-lossless",          no_argument, NULL, 0 },
-    { "no-cu-lossless",       no_argument, NULL, 0 },
-    { "no-constrained-intra", no_argument, NULL, 0 },
-    { "constrained-intra",    no_argument, NULL, 0 },
-    { "fast-intra",           no_argument, NULL, 0 },
-    { "no-fast-intra",        no_argument, NULL, 0 },
-    { "no-open-gop",          no_argument, NULL, 0 },
-    { "open-gop",             no_argument, NULL, 0 },
-    { "keyint",         required_argument, NULL, 'I' },
-    { "min-keyint",     required_argument, NULL, 'i' },
-    { "scenecut",       required_argument, NULL, 0 },
-    { "no-scenecut",          no_argument, NULL, 0 },
-    { "rc-lookahead",   required_argument, NULL, 0 },
-    { "bframes",        required_argument, NULL, 'b' },
-    { "bframe-bias",    required_argument, NULL, 0 },
-    { "b-adapt",        required_argument, NULL, 0 },
-    { "no-b-adapt",           no_argument, NULL, 0 },
-    { "no-b-pyramid",         no_argument, NULL, 0 },
-    { "b-pyramid",            no_argument, NULL, 0 },
-    { "ref",            required_argument, NULL, 0 },
-    { "no-weightp",           no_argument, NULL, 0 },
-    { "weightp",              no_argument, NULL, 'w' },
-    { "no-weightb",           no_argument, NULL, 0 },
-    { "weightb",              no_argument, NULL, 0 },
-    { "crf",            required_argument, NULL, 0 },
-    { "crf-max",        required_argument, NULL, 0 },
-    { "crf-min",        required_argument, NULL, 0 },
-    { "vbv-maxrate",    required_argument, NULL, 0 },
-    { "vbv-bufsize",    required_argument, NULL, 0 },
-    { "vbv-init",       required_argument, NULL, 0 },
-    { "bitrate",        required_argument, NULL, 0 },
-    { "qp",             required_argument, NULL, 'q' },
-    { "aq-mode",        required_argument, NULL, 0 },
-    { "aq-strength",    required_argument, NULL, 0 },
-    { "ipratio",        required_argument, NULL, 0 },
-    { "pbratio",        required_argument, NULL, 0 },
-    { "qcomp",          required_argument, NULL, 0 },
-    { "qpstep",         required_argument, NULL, 0 },
-    { "ratetol",        required_argument, NULL, 0 },
-    { "cplxblur",       required_argument, NULL, 0 },
-    { "qblur",          required_argument, NULL, 0 },
-    { "cbqpoffs",       required_argument, NULL, 0 },
-    { "crqpoffs",       required_argument, NULL, 0 },
-    { "rd",             required_argument, NULL, 0 },
-    { "psy-rd",         required_argument, NULL, 0 },
-    { "psy-rdoq",       required_argument, NULL, 0 },
-    { "scaling-list",   required_argument, NULL, 0 },
-    { "lossless",             no_argument, NULL, 0 },
-    { "no-lossless",          no_argument, NULL, 0 },
-    { "no-signhide",          no_argument, NULL, 0 },
-    { "signhide",             no_argument, NULL, 0 },
-    { "no-lft",               no_argument, NULL, 0 }, /* DEPRECATED */
-    { "lft",                  no_argument, NULL, 0 }, /* DEPRECATED */
-    { "no-deblock",           no_argument, NULL, 0 },
-    { "deblock",        required_argument, NULL, 0 },
-    { "no-sao",               no_argument, NULL, 0 },
-    { "sao",                  no_argument, NULL, 0 },
-    { "no-sao-non-deblock",   no_argument, NULL, 0 },
-    { "sao-non-deblock",      no_argument, NULL, 0 },
-    { "no-ssim",              no_argument, NULL, 0 },
-    { "ssim",                 no_argument, NULL, 0 },
-    { "no-psnr",              no_argument, NULL, 0 },
-    { "psnr",                 no_argument, NULL, 0 },
-    { "hash",           required_argument, NULL, 0 },
-    { "no-strong-intra-smoothing", no_argument, NULL, 0 },
-    { "strong-intra-smoothing",    no_argument, NULL, 0 },
-    { "no-cutree",                 no_argument, NULL, 0 },
-    { "cutree",                    no_argument, NULL, 0 },
-    { "no-hrd",               no_argument, NULL, 0 },
-    { "hrd",                  no_argument, NULL, 0 },
-    { "sar",            required_argument, NULL, 0 },
-    { "overscan",       required_argument, NULL, 0 },
-    { "videoformat",    required_argument, NULL, 0 },
-    { "range",          required_argument, NULL, 0 },
-    { "colorprim",      required_argument, NULL, 0 },
-    { "transfer",       required_argument, NULL, 0 },
-    { "colormatrix",    required_argument, NULL, 0 },
-    { "chromaloc",      required_argument, NULL, 0 },
-    { "crop-rect",      required_argument, NULL, 0 },
-    { "no-dither",            no_argument, NULL, 0 },
-    { "dither",               no_argument, NULL, 0 },
-    { "no-repeat-headers",    no_argument, NULL, 0 },
-    { "repeat-headers",       no_argument, NULL, 0 },
-    { "aud",                  no_argument, NULL, 0 },
-    { "no-aud",               no_argument, NULL, 0 },
-    { "info",                 no_argument, NULL, 0 },
-    { "no-info",              no_argument, NULL, 0 },
-    { "qpfile",         required_argument, NULL, 0 },
-    { "lambda-file",    required_argument, NULL, 0 },
-    { "b-intra",              no_argument, NULL, 0 },
-    { "no-b-intra",           no_argument, NULL, 0 },
-    { "nr",             required_argument, NULL, 0 },
-    { "stats",          required_argument, NULL, 0 },
-    { "pass",           required_argument, NULL, 0 },
-    { "slow-firstpass",       no_argument, NULL, 0 },
-    { "no-slow-firstpass",    no_argument, NULL, 0 },
-    { "analysis-mode",  required_argument, NULL, 0 },
-    { "analysis-file",  required_argument, NULL, 0 },
-    { 0, 0, 0, 0 }
-};
+using namespace X265_NS;
 
 /* Ctrl-C handler */
 static volatile sig_atomic_t b_ctrl_c /* = 0 */;
@@ -227,26 +68,34 @@ static void sigint_handler(int)
     b_ctrl_c = 1;
 }
 
+static const char* summaryCSVHeader =
+    "Command, Date/Time, Elapsed Time, FPS, Bitrate, "
+    "Y PSNR, U PSNR, V PSNR, Global PSNR, SSIM, SSIM (dB), "
+    "I count, I ave-QP, I kbps, I-PSNR Y, I-PSNR U, I-PSNR V, I-SSIM (dB), "
+    "P count, P ave-QP, P kbps, P-PSNR Y, P-PSNR U, P-PSNR V, P-SSIM (dB), "
+    "B count, B ave-QP, B kbps, B-PSNR Y, B-PSNR U, B-PSNR V, B-SSIM (dB), "
+    "Version\n";
+
 struct CLIOptions
 {
-    Input*  input;
-    Output* recon;
-    std::fstream bitstreamFile;
+    InputFile* input;
+    ReconFile* recon;
+    OutputFile* output;
+    FILE*       qpfile;
+    FILE*       csvfpt;
+    const char* csvfn;
+    const char* reconPlayCmd;
+    const x265_api* api;
+    x265_param* param;
     bool bProgress;
     bool bForceY4m;
     bool bDither;
-
+    int csvLogLevel;
     uint32_t seek;              // number of frames to skip from the beginning
     uint32_t framesToBeEncoded; // number of frames to encode
     uint64_t totalbytes;
-    size_t   analysisRecordSize; // number of bytes read from or dumped into file
-    int      analysisHeaderSize;
-
     int64_t startTime;
     int64_t prevUpdateTime;
-    float   frameRate;
-    FILE*   qpfile;
-    FILE*   analysisFile;
 
     /* in microseconds */
     static const int UPDATE_INTERVAL = 250000;
@@ -255,6 +104,13 @@ struct CLIOptions
     {
         input = NULL;
         recon = NULL;
+        output = NULL;
+        qpfile = NULL;
+        csvfpt = NULL;
+        csvfn = NULL;
+        reconPlayCmd = NULL;
+        api = NULL;
+        param = NULL;
         framesToBeEncoded = seek = 0;
         totalbytes = 0;
         bProgress = true;
@@ -262,20 +118,16 @@ struct CLIOptions
         startTime = x265_mdate();
         prevUpdateTime = 0;
         bDither = false;
-        qpfile = NULL;
-        analysisFile = NULL;
-        analysisRecordSize = 0;
-        analysisHeaderSize = 0;
+        csvLogLevel = 0;
     }
 
     void destroy();
-    void writeNALs(const x265_nal* nal, uint32_t nalcount);
-    void printStatus(uint32_t frameNum, x265_param *param);
-    void printVersion(x265_param *param);
-    void showHelp(x265_param *param);
-    bool parse(int argc, char **argv, x265_param* param);
+    bool parseCSVFile();
+    void writeLog(int argc, char **argv, x265_stats* stats);
+    void writeFrameLog(x265_frame_stats* frameStats);
+    void printStatus(uint32_t frameNum);
+    bool parse(int argc, char **argv);
     bool parseQPFile(x265_picture &pic_org);
-    bool validateFanout(x265_param*);
 };
 
 void CLIOptions::destroy()
@@ -289,29 +141,190 @@ void CLIOptions::destroy()
     if (qpfile)
         fclose(qpfile);
     qpfile = NULL;
-    if (analysisFile)
-        fclose(analysisFile);
-    analysisFile = NULL;
+    if (csvfpt)
+        fclose(csvfpt);
+    csvfpt = NULL;
+    if (output)
+        output->release();
+    output = NULL;
 }
 
-void CLIOptions::writeNALs(const x265_nal* nal, uint32_t nalcount)
+bool CLIOptions::parseCSVFile()
 {
-    PPAScopeEvent(bitstream_write);
-    for (uint32_t i = 0; i < nalcount; i++)
+    csvfpt = fopen(csvfn, "r");
+    if (csvfpt)
     {
-        bitstreamFile.write((const char*)nal->payload, nal->sizeBytes);
-        totalbytes += nal->sizeBytes;
-        nal++;
+        /* file already exists, re-open for append */
+        fclose(csvfpt);
+        csvfpt = fopen(csvfn, "ab");
+    }
+    else
+    {
+        /* new CSV file, write header */
+        csvfpt = fopen(csvfn, "wb");
+        if (csvfpt)
+        {
+            if (csvLogLevel)
+            {
+                fprintf(csvfpt, "Encode Order, Type, POC, QP, Bits, ");
+                if (param->rc.rateControlMode == X265_RC_CRF)
+                    fprintf(csvfpt, "RateFactor, ");
+                fprintf(csvfpt, "Y PSNR, U PSNR, V PSNR, YUV PSNR, SSIM, SSIM (dB),  List 0, List 1");
+                /* detailed performance statistics */
+                fprintf(csvfpt, ", DecideWait (ms), Row0Wait (ms), Wall time (ms), Ref Wait Wall (ms), Total CTU time (ms), Stall Time (ms), Avg WPP, Row Blocks\n");
+            }
+            else
+                fputs(summaryCSVHeader, csvfpt);
+        }
+    }
+
+    if (!csvfpt)
+    {
+        x265_log(param, X265_LOG_ERROR, "Unable to open CSV log file <%s>, aborting\n", csvfn);
+        return true;
+    }
+    return false;
+}
+
+void CLIOptions::writeLog(int argc, char **argv, x265_stats* stats)
+{
+    if (csvfpt)
+    {
+        if (csvLogLevel)
+        {
+            // adding summary to a per-frame csv log file needs a summary header
+            fprintf(csvfpt, "\nSummary\n");
+            fputs(summaryCSVHeader, csvfpt);
+        }
+        // CLI arguments or other
+        for (int i = 1; i < argc; i++)
+        {
+            if (i) fputc(' ', csvfpt);
+            fputs(argv[i], csvfpt);
+        }
+
+        // current date and time
+        time_t now;
+        struct tm* timeinfo;
+        time(&now);
+        timeinfo = localtime(&now);
+        char buffer[200];
+        strftime(buffer, 128, "%c", timeinfo);
+        fprintf(csvfpt, ", %s, ", buffer);
+
+        // elapsed time, fps, bitrate
+        fprintf(csvfpt, "%.2f, %.2f, %.2f,",
+            stats->elapsedEncodeTime, stats->encodedPictureCount / stats->elapsedEncodeTime, stats->bitrate);
+
+        if (param->bEnablePsnr)
+            fprintf(csvfpt, " %.3lf, %.3lf, %.3lf, %.3lf,",
+            stats->globalPsnrY / stats->encodedPictureCount, stats->globalPsnrU / stats->encodedPictureCount,
+            stats->globalPsnrV / stats->encodedPictureCount, stats->globalPsnr);
+        else
+            fprintf(csvfpt, " -, -, -, -,");
+        if (param->bEnableSsim)
+            fprintf(csvfpt, " %.6f, %6.3f,", stats->globalSsim, x265_ssim2dB(stats->globalSsim));
+        else
+            fprintf(csvfpt, " -, -,");
+
+        if (stats->statsI.numPics)
+        {
+            fprintf(csvfpt, " %-6u, %2.2lf, %-8.2lf,", stats->statsI.numPics, stats->statsI.avgQp, stats->statsI.bitrate);
+            if (param->bEnablePsnr)
+                fprintf(csvfpt, " %.3lf, %.3lf, %.3lf,", stats->statsI.psnrY, stats->statsI.psnrU, stats->statsI.psnrV);
+            else
+                fprintf(csvfpt, " -, -, -,");
+            if (param->bEnableSsim)
+                fprintf(csvfpt, " %.3lf,", stats->statsI.ssim);
+            else
+                fprintf(csvfpt, " -,");
+        }
+        else
+            fprintf(csvfpt, " -, -, -, -, -, -, -,");
+
+        if (stats->statsP.numPics)
+        {
+            fprintf(csvfpt, " %-6u, %2.2lf, %-8.2lf,", stats->statsP.numPics, stats->statsP.avgQp, stats->statsP.bitrate);
+            if (param->bEnablePsnr)
+                fprintf(csvfpt, " %.3lf, %.3lf, %.3lf,", stats->statsP.psnrY, stats->statsP.psnrU, stats->statsP.psnrV);
+            else
+                fprintf(csvfpt, " -, -, -,");
+            if (param->bEnableSsim)
+                fprintf(csvfpt, " %.3lf,", stats->statsP.ssim);
+            else
+                fprintf(csvfpt, " -,");
+        }
+        else
+            fprintf(csvfpt, " -, -, -, -, -, -, -,");
+
+        if (stats->statsB.numPics)
+        {
+            fprintf(csvfpt, " %-6u, %2.2lf, %-8.2lf,", stats->statsB.numPics, stats->statsB.avgQp, stats->statsB.bitrate);
+            if (param->bEnablePsnr)
+                fprintf(csvfpt, " %.3lf, %.3lf, %.3lf,", stats->statsB.psnrY, stats->statsB.psnrU, stats->statsB.psnrV);
+            else
+                fprintf(csvfpt, " -, -, -,");
+            if (param->bEnableSsim)
+                fprintf(csvfpt, " %.3lf,", stats->statsB.ssim);
+            else
+                fprintf(csvfpt, " -,");
+        }
+        else
+            fprintf(csvfpt, " -, -, -, -, -, -, -,");
+
+        fprintf(csvfpt, " %s\n", api->version_str);
     }
 }
 
-void CLIOptions::printStatus(uint32_t frameNum, x265_param *param)
+void CLIOptions::writeFrameLog(x265_frame_stats* frameStats)
+{
+    if (csvfpt)
+    {
+        // per frame CSV logging if the file handle is valid
+        fprintf(csvfpt, "%d, %c-SLICE, %4d, %2.2lf, %10d,", frameStats->encoderOrder, frameStats->sliceType, frameStats->poc, frameStats->qp, (int)frameStats->bits);
+        if (param->rc.rateControlMode == X265_RC_CRF)
+            fprintf(csvfpt, "%.3lf,", frameStats->rateFactor);
+        if (param->bEnablePsnr)
+            fprintf(csvfpt, "%.3lf, %.3lf, %.3lf, %.3lf,", frameStats->psnrY, frameStats->psnrU, frameStats->psnrV, frameStats->psnr);
+        else
+            fputs(" -, -, -, -,", csvfpt);
+        if (param->bEnableSsim)
+            fprintf(csvfpt, " %.6f, %6.3f,", frameStats->ssim, x265_ssim2dB(frameStats->ssim));
+        else
+            fputs(" -, -,", csvfpt);
+        if (frameStats->sliceType == 'I')
+            fputs(" -, -,", csvfpt);
+        else
+        {
+            int i = 0;
+            while (frameStats->list0POC[i] != -1)
+                fprintf(csvfpt, "%d ", frameStats->list0POC[i++]);
+            fprintf(csvfpt, ",");
+            if (frameStats->sliceType != 'P')
+            {
+                i = 0;
+                while (frameStats->list1POC[i] != -1)
+                    fprintf(csvfpt, "%d ", frameStats->list1POC[i++]);
+                fprintf(csvfpt, ",");
+            }
+            else
+                fputs(" -,", csvfpt);
+        }
+        fprintf(csvfpt, " %.1lf, %.1lf, %.1lf, %.1lf, %.1lf, %.1lf,", frameStats->decideWaitTime, frameStats->row0WaitTime, frameStats->wallTime, frameStats->refWaitWallTime, frameStats->totalCTUTime, frameStats->stallTime);
+        fprintf(csvfpt, " %.3lf, %d", frameStats->avgWPP, frameStats->countRowBlocks);
+        fprintf(csvfpt, "\n");
+        fflush(stderr);
+    }
+}
+
+void CLIOptions::printStatus(uint32_t frameNum)
 {
     char buf[200];
     int64_t time = x265_mdate();
 
     if (!bProgress || !frameNum || (prevUpdateTime && time - prevUpdateTime < UPDATE_INTERVAL))
         return;
+
     int64_t elapsed = time - startTime;
     double fps = elapsed > 0 ? frameNum * 1000000. / elapsed : 0;
     float bitrate = 0.008f * totalbytes * (param->fpsNum / param->fpsDenom) / ((float)frameNum);
@@ -323,203 +336,24 @@ void CLIOptions::printStatus(uint32_t frameNum, x265_param *param)
                 eta / 3600, (eta / 60) % 60, eta % 60);
     }
     else
-    {
         sprintf(buf, "x265 %d frames: %.2f fps, %.2f kb/s", frameNum, fps, bitrate);
-    }
+
     fprintf(stderr, "%s  \r", buf + 5);
     SetConsoleTitle(buf);
     fflush(stderr); // needed in windows
     prevUpdateTime = time;
 }
 
-void CLIOptions::printVersion(x265_param *param)
+bool CLIOptions::parse(int argc, char **argv)
 {
-    x265_log(param, X265_LOG_INFO, "HEVC encoder version %s\n", x265_version_str);
-    x265_log(param, X265_LOG_INFO, "build info %s\n", x265_build_info_str);
-}
-
-void CLIOptions::showHelp(x265_param *param)
-{
-    int level = param->logLevel;
-    x265_param_default(param);
-    printVersion(param);
-
-#define OPT(value) (value ? "enabled" : "disabled")
-#define H0 printf
-#define H1 if (level >= X265_LOG_DEBUG) printf
-
-    H0("\nSyntax: x265 [options] infile [-o] outfile\n");
-    H0("    infile can be YUV or Y4M\n");
-    H0("    outfile is raw HEVC bitstream\n");
-    H0("\nExecutable Options:\n");
-    H0("-h/--help                        Show this help text and exit\n");
-    H0("-V/--version                     Show version info and exit\n");
-    H0("\nOutput Options:\n");
-    H0("-o/--output <filename>           Bitstream output file name\n");
-    H0("   --log-level <string>          Logging level: none error warning info debug full. Default %s\n", logLevelNames[param->logLevel + 1]);
-    H0("   --no-progress                 Disable CLI progress reports\n");
-    H0("   --[no-]cu-stats               Enable logging stats about distribution of cu across all modes. Default %s\n",OPT(param->bLogCuStats));
-    H1("   --csv <filename>              Comma separated log file, log level >= 3 frame log, else one line per run\n");
-    H0("\nInput Options:\n");
-    H0("   --input <filename>            Raw YUV or Y4M input file name. `-` for stdin\n");
-    H1("   --y4m                         Force parsing of input stream as YUV4MPEG2 regardless of file extension\n");
-    H0("   --fps <float|rational>        Source frame rate (float or num/denom), auto-detected if Y4M\n");
-    H0("   --input-res WxH               Source picture size [w x h], auto-detected if Y4M\n");
-    H1("   --input-depth <integer>       Bit-depth of input file. Default 8\n");
-    H1("   --input-csp <string>          Source color space: i420, i444 or i422, auto-detected if Y4M. Default: i420\n");
-    H0("-f/--frames <integer>            Maximum number of frames to encode. Default all\n");
-    H0("   --seek <integer>              First frame to encode\n");
-    H1("   --[no-]interlace <bff|tff>    Indicate input pictures are interlace fields in temporal order. Default progressive\n");
-    H1("   --dither                      Enable dither if downscaling to 8 bit pixels. Default disabled\n");
-    H0("\nQuality reporting metrics:\n");
-    H0("   --[no-]ssim                   Enable reporting SSIM metric scores. Default %s\n", OPT(param->bEnableSsim));
-    H0("   --[no-]psnr                   Enable reporting PSNR metric scores. Default %s\n", OPT(param->bEnablePsnr));
-    H0("\nProfile, Level, Tier:\n");
-    H0("   --profile <string>            Enforce an encode profile: main, main10, mainstillpicture\n");
-    H0("   --level-idc <integer|float>   Force a minumum required decoder level (as '5.0' or '50')\n");
-    H0("   --[no-]high-tier              If a decoder level is specified, this modifier selects High tier of that level\n");
-    H0("\nThreading, performance:\n");
-    H0("   --threads <integer>           Number of threads for thread pool (0: detect CPU core count, default)\n");
-    H0("-F/--frame-threads <integer>     Number of concurrently encoded frames. 0: auto-determined by core count\n");
-    H0("   --[no-]wpp                    Enable Wavefront Parallel Processing. Default %s\n", OPT(param->bEnableWavefront));
-    H0("   --[no-]pmode                  Parallel mode analysis. Default %s\n", OPT(param->bDistributeModeAnalysis));
-    H0("   --[no-]pme                    Parallel motion estimation. Default %s\n", OPT(param->bDistributeMotionEstimation));
-    H0("   --[no-]asm <bool|int|string>  Override CPU detection. Default: auto\n");
-    H0("\nPresets:\n");
-    H0("-p/--preset <string>             Trade off performance for compression efficiency. Default medium\n");
-    H0("                                 ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow, or placebo\n");
-    H0("-t/--tune <string>               Tune the settings for a particular type of source or situation:\n");
-    H0("                                 psnr, ssim, grain, zerolatency, fastdecode or cbr\n");
-    H0("\nQuad-Tree size and depth:\n");
-    H0("-s/--ctu <64|32|16>              Maximum CU size (WxH). Default %d\n", param->maxCUSize);
-    H0("   --tu-intra-depth <integer>    Max TU recursive depth for intra CUs. Default %d\n", param->tuQTMaxIntraDepth);
-    H0("   --tu-inter-depth <integer>    Max TU recursive depth for inter CUs. Default %d\n", param->tuQTMaxInterDepth);
-    H0("\nAnalysis:\n");
-    H0("   --rd <0..6>                   Level of RD in mode decision 0:least....6:full RDO. Default %d\n", param->rdLevel);
-    H0("   --psy-rd <0..2.0>             Strength of psycho-visual rate distortion optimization, 0 to disable. Default %.1f\n", param->psyRd);
-    H0("   --psy-rdoq <0..50.0>          Strength of psycho-visual optimization in quantization, 0 to disable. Default %.1f\n", param->psyRdoq);
-    H0("   --[no-]early-skip             Enable early SKIP detection. Default %s\n", OPT(param->bEnableEarlySkip));
-    H1("   --[no-]fast-cbf               Enable early outs based on whether residual is coded. Default %s\n", OPT(param->bEnableCbfFastMode));
-    H1("   --[no-]tskip-fast             Enable fast intra transform skipping. Default %s\n", OPT(param->bEnableTSkipFast));
-    H1("   --nr <integer>                An integer value in range of 100 to 1000, which denotes strength of noise reduction. Default disabled\n");
-    H0("\nCoding tools:\n");
-    H0("-w/--[no-]weightp                Enable weighted prediction in P slices. Default %s\n", OPT(param->bEnableWeightedPred));
-    H0("   --[no-]weightb                Enable weighted prediction in B slices. Default %s\n", OPT(param->bEnableWeightedBiPred));
-    H0("   --[no-]cu-lossless            Consider lossless mode in CU RDO decisions. Default %s\n", OPT(param->bCULossless));
-    H0("   --[no-]signhide               Hide sign bit of one coeff per TU (rdo). Default %s\n", OPT(param->bEnableSignHiding));
-    H1("   --[no-]tskip                  Enable intra 4x4 transform skipping. Default %s\n", OPT(param->bEnableTransformSkip));
-    H0("\nTemporal / motion search options:\n");
-    H0("   --me <string>                 Motion search method dia hex umh star full. Default %d\n", param->searchMethod);
-    H0("-m/--subme <integer>             Amount of subpel refinement to perform (0:least .. 7:most). Default %d \n", param->subpelRefine);
-    H0("   --merange <integer>           Motion search range. Default %d\n", param->searchRange);
-    H0("   --max-merge <1..5>            Maximum number of merge candidates. Default %d\n", param->maxNumMergeCand);
-    H0("   --[no-]rect                   Enable rectangular motion partitions Nx2N and 2NxN. Default %s\n", OPT(param->bEnableRectInter));
-    H0("   --[no-]amp                    Enable asymmetric motion partitions, requires --rect. Default %s\n", OPT(param->bEnableAMP));
-    H1("   --[no-]temporal-mvp           Enable temporal MV predictors. Default %s\n", OPT(param->bEnableTemporalMvp));
-    H0("\nSpatial / intra options:\n");
-    H0("   --[no-]strong-intra-smoothing Enable strong intra smoothing for 32x32 blocks. Default %s\n", OPT(param->bEnableStrongIntraSmoothing));
-    H0("   --[no-]constrained-intra      Constrained intra prediction (use only intra coded reference pixels) Default %s\n", OPT(param->bEnableConstrainedIntra));
-    H0("   --[no-]b-intra                Enable intra in B frames in veryslow presets. Default %s\n", OPT(param->bIntraInBFrames));
-    H0("   --[no-]fast-intra             Enable faster search method for angular intra predictions. Default %s\n", OPT(param->bEnableFastIntra));
-    H0("   --rdpenalty <0..2>            penalty for 32x32 intra TU in non-I slices. 0:disabled 1:RD-penalty 2:maximum. Default %d\n", param->rdPenalty);
-    H0("\nSlice decision options:\n");
-    H0("   --[no-]open-gop               Enable open-GOP, allows I slices to be non-IDR. Default %s\n", OPT(param->bOpenGOP));
-    H0("-I/--keyint <integer>            Max IDR period in frames. -1 for infinite-gop. Default %d\n", param->keyframeMax);
-    H0("-i/--min-keyint <integer>        Scenecuts closer together than this are coded as I, not IDR. Default: auto\n");
-    H0("   --no-scenecut                 Disable adaptive I-frame decision\n");
-    H0("   --scenecut <integer>          How aggressively to insert extra I-frames. Default %d\n", param->scenecutThreshold);
-    H0("   --rc-lookahead <integer>      Number of frames for frame-type lookahead (determines encoder latency) Default %d\n", param->lookaheadDepth);
-    H0("   --bframes <integer>           Maximum number of consecutive b-frames (now it only enables B GOP structure) Default %d\n", param->bframes);
-    H1("   --bframe-bias <integer>       Bias towards B frame decisions. Default %d\n", param->bFrameBias);
-    H0("   --b-adapt <0..2>              0 - none, 1 - fast, 2 - full (trellis) adaptive B frame scheduling. Default %d\n", param->bFrameAdaptive);
-    H0("   --[no-]b-pyramid              Use B-frames as references. Default %s\n", OPT(param->bBPyramid));
-    H0("   --ref <integer>               max number of L0 references to be allowed (1 .. 16) Default %d\n", param->maxNumReferences);
-    H1("   --qpfile <string>             Force frametypes and QPs for some or all frames\n");
-    H1("                                 Format of each line: framenumber frametype QP\n");
-    H1("                                 QP is optional (none lets x265 choose). Frametypes: I,i,P,B,b.\n");
-    H1("                                 QPs are restricted by qpmin/qpmax.\n");
-    H0("\nRate control, Adaptive Quantization:\n");
-    H0("   --bitrate <integer>           Target bitrate (kbps) for ABR (implied). Default %d\n", param->rc.bitrate);
-    H1("-q/--qp <integer>                QP for P slices in CQP mode (implied). --ipratio and --pbration determine other slice QPs\n");
-    H0("   --crf <float>                 Quality-based VBR (0-51). Default %.1f\n", param->rc.rfConstant);
-    H1("   --[no-]lossless               Enable lossless: bypass transform, quant and loop filters globally. Default %s\n", OPT(param->bLossless));
-    H1("   --crf-max <float>             With CRF+VBV, limit RF to this value. Default %f\n", param->rc.rfConstantMax);
-    H1("                                 May cause VBV underflows!\n");
-    H1("   --crf-min <float>             With CRF+VBV, limit RF to this value. Default %f\n", param->rc.rfConstantMin);
-    H1("                                 this specifies a minimum rate factor value for encode!\n");
-    H0("   --vbv-maxrate <integer>       Max local bitrate (kbit/s). Default %d\n", param->rc.vbvMaxBitrate);
-    H0("   --vbv-bufsize <integer>       Set size of the VBV buffer (kbit). Default %d\n", param->rc.vbvBufferSize);
-    H0("   --vbv-init <float>            Initial VBV buffer occupancy (fraction of bufsize or in kbits). Default %.2f\n", param->rc.vbvBufferInit);
-    H0("   --pass                        Multi pass rate control.\n"
-       "                                   - 1 : First pass, creates stats file\n"
-       "                                   - 2 : Last pass, does not overwrite stats file\n"
-       "                                   - 3 : Nth pass, overwrites stats file\n");
-    H0("   --stats                       Filename for stats file in multipass pass rate control. Default x265_2pass.log\n");
-    H0("   --[no-]slow-firstpass         Enable a slow first pass in a multipass rate control mode. Default %s\n", OPT(param->rc.bEnableSlowFirstPass));
-    H0("   --analysis-mode <string|int>  save - Dump analysis info into file, load - Load analysis buffers from the file. Default %d\n", param->analysisMode);
-    H0("   --analysis-file <filename>    Specify file name used for either dumping or reading analysis data.\n");
-    H0("   --aq-mode <integer>           Mode for Adaptive Quantization - 0:none 1:uniform AQ 2:auto variance. Default %d\n", param->rc.aqMode);
-    H0("   --aq-strength <float>         Reduces blocking and blurring in flat and textured areas (0 to 3.0). Default %.2f\n", param->rc.aqStrength);
-    H0("   --[no-]cutree                 Enable cutree for Adaptive Quantization. Default %s\n", OPT(param->rc.cuTree));
-    H1("   --ipratio <float>             QP factor between I and P. Default %.2f\n", param->rc.ipFactor);
-    H1("   --pbratio <float>             QP factor between P and B. Default %.2f\n", param->rc.pbFactor);
-    H1("   --qcomp <float>               Weight given to predicted complexity. Default %.2f\n", param->rc.qCompress);
-    H1("   --cbqpoffs <integer>          Chroma Cb QP Offset. Default %d\n", param->cbQpOffset);
-    H1("   --crqpoffs <integer>          Chroma Cr QP Offset. Default %d\n", param->crQpOffset);
-    H1("   --scaling-list <string>       Specify a file containing HM style quant scaling lists or 'default' or 'off'. Default: off\n");
-    H1("   --lambda-file <string>        Specify a file containing replacement values for the lambda tables\n");
-    H1("                                 MAX_MAX_QP+1 floats for lambda table, then again for lambda2 table\n");
-    H1("                                 Blank lines and lines starting with hash(#) are ignored\n");
-    H1("                                 Comma is considered to be white-space\n");
-    H0("\nLoop filters (deblock and SAO):\n");
-    H0("   --[no-]deblock                Enable Deblocking Loop Filter, optionally specify tC:Beta offsets Default %s\n", OPT(param->bEnableLoopFilter));
-    H0("   --[no-]sao                    Enable Sample Adaptive Offset. Default %s\n", OPT(param->bEnableSAO));
-    H1("   --[no-]sao-non-deblock        Use non-deblocked pixels, else right/bottom boundary areas skipped. Default %s\n", OPT(param->bSaoNonDeblocked));
-    H0("\nVUI options:\n");
-    H0("   --sar <width:height|int>      Sample Aspect Ratio, the ratio of width to height of an individual pixel.\n");
-    H0("                                 Choose from 0=undef, 1=1:1(\"square\"), 2=12:11, 3=10:11, 4=16:11,\n");
-    H0("                                 5=40:33, 6=24:11, 7=20:11, 8=32:11, 9=80:33, 10=18:11, 11=15:11,\n");
-    H0("                                 12=64:33, 13=160:99, 14=4:3, 15=3:2, 16=2:1 or custom ratio of <int:int>. Default %d\n", param->vui.aspectRatioIdc);
-    H1("   --crop-rect <string>          Add 'left,top,right,bottom' to the bitstream-level cropping rectangle\n");
-    H1("   --overscan <string>           Specify whether it is appropriate for decoder to show cropped region: undef, show or crop. Default undef\n");
-    H0("   --videoformat <string>        Specify video format from undef, component, pal, ntsc, secam, mac. Default undef\n");
-    H0("   --range <string>              Specify black level and range of luma and chroma signals as full or limited Default limited\n");
-    H0("   --colorprim <string>          Specify color primaries from undef, bt709, bt470m, bt470bg, smpte170m,\n");
-    H0("                                 smpte240m, film, bt2020. Default undef\n");
-    H0("   --transfer <string>           Specify transfer characteristics from undef, bt709, bt470m, bt470bg, smpte170m,\n");
-    H0("                                 smpte240m, linear, log100, log316, iec61966-2-4, bt1361e, iec61966-2-1,\n");
-    H0("                                 bt2020-10, bt2020-12. Default undef\n");
-    H1("   --colormatrix <string>        Specify color matrix setting from undef, bt709, fcc, bt470bg, smpte170m,\n");
-    H1("                                 smpte240m, GBR, YCgCo, bt2020nc, bt2020c. Default undef\n");
-    H1("   --chromaloc <integer>         Specify chroma sample location (0 to 5). Default of %d\n", param->vui.chromaSampleLocTypeTopField);
-    H0("\nBitstream options:\n");
-    H0("   --[no-]info                   Emit SEI identifying encoder and parameters. Default %s\n", OPT(param->bEmitInfoSEI));
-    H0("   --[no-]aud                    Emit access unit delimiters at the start of each access unit. Default %s\n", OPT(param->bEnableAccessUnitDelimiters));
-    H0("   --[no-]hrd                    Enable HRD parameters signaling. Default %s\n", OPT(param->bEmitHRDSEI));
-    H0("   --[no-]repeat-headers         Emit SPS and PPS headers at each keyframe. Default %s\n", OPT(param->bRepeatHeaders));
-    H1("   --hash <integer>              Decoded Picture Hash SEI 0: disabled, 1: MD5, 2: CRC, 3: Checksum. Default %d\n", param->decodedPictureHashSEI);
-    H1("\nReconstructed video options (debugging):\n");
-    H1("-r/--recon <filename>            Reconstructed raw image YUV or Y4M output file name\n");
-    H1("   --recon-depth <integer>       Bit-depth of reconstructed raw image file. Defaults to input bit depth, or 8 if Y4M\n");
-#undef OPT
-#undef H0
-#undef H1
-
-    if (level < X265_LOG_DEBUG)
-        printf("\nUse --log-level full --help for a full listing\n");
-    printf("\n\nComplete documentation may be found at http://x265.readthedocs.org/en/default/cli.html\n");
-    exit(0);
-}
-
-bool CLIOptions::parse(int argc, char **argv, x265_param* param)
-{
-    bool bError = 0;
-    int help = 0;
+    bool bError = false;
+    int bShowHelp = false;
     int inputBitDepth = 8;
+    int outputBitDepth = 0;
     int reconFileBitDepth = 0;
     const char *inputfn = NULL;
     const char *reconfn = NULL;
-    const char *bitstreamfn = NULL;
+    const char *outputfn = NULL;
     const char *preset = NULL;
     const char *tune = NULL;
     const char *profile = NULL;
@@ -536,18 +370,41 @@ bool CLIOptions::parse(int argc, char **argv, x265_param* param)
         int c = getopt_long(argc, argv, short_options, long_options, NULL);
         if (c == -1)
             break;
-        if (c == 'p')
+        else if (c == 'p')
             preset = optarg;
-        if (c == 't')
+        else if (c == 't')
             tune = optarg;
+        else if (c == 'D')
+            outputBitDepth = atoi(optarg);
         else if (c == '?')
-            showHelp(param);
+            bShowHelp = true;
     }
 
-    if (x265_param_default_preset(param, preset, tune) < 0)
+    api = x265_api_get(outputBitDepth);
+    if (!api)
+    {
+        x265_log(NULL, X265_LOG_WARNING, "falling back to default bit-depth\n");
+        api = x265_api_get(0);
+    }
+
+    param = api->param_alloc();
+    if (!param)
+    {
+        x265_log(NULL, X265_LOG_ERROR, "param alloc failed\n");
+        return true;
+    }
+
+    if (api->param_default_preset(param, preset, tune) < 0)
     {
         x265_log(NULL, X265_LOG_ERROR, "preset or tune unrecognized\n");
         return true;
+    }
+
+    if (bShowHelp)
+    {
+        api->param_default(param);
+        printVersion(param, api);
+        showHelp(param);
     }
 
     for (optind = 0;; )
@@ -555,18 +412,18 @@ bool CLIOptions::parse(int argc, char **argv, x265_param* param)
         int long_options_index = -1;
         int c = getopt_long(argc, argv, short_options, long_options, &long_options_index);
         if (c == -1)
-        {
             break;
-        }
 
         switch (c)
         {
         case 'h':
+            api->param_default(param);
+            printVersion(param, api);
             showHelp(param);
             break;
 
         case 'V':
-            printVersion(param);
+            printVersion(param, api);
             x265_setup_primitives(param, -1);
             exit(0);
 
@@ -604,8 +461,10 @@ bool CLIOptions::parse(int argc, char **argv, x265_param* param)
             if (0) ;
             OPT2("frame-skip", "seek") this->seek = (uint32_t)x265_atoi(optarg, bError);
             OPT("frames") this->framesToBeEncoded = (uint32_t)x265_atoi(optarg, bError);
+            OPT("csv") this->csvfn = optarg;
+            OPT("csv-log-level") this->csvLogLevel = x265_atoi(optarg, bError);
             OPT("no-progress") this->bProgress = false;
-            OPT("output") bitstreamfn = optarg;
+            OPT("output") outputfn = optarg;
             OPT("input") inputfn = optarg;
             OPT("recon") reconfn = optarg;
             OPT("input-depth") inputBitDepth = (uint32_t)x265_atoi(optarg, bError);
@@ -615,17 +474,19 @@ bool CLIOptions::parse(int argc, char **argv, x265_param* param)
             OPT("profile") profile = optarg; /* handled last */
             OPT("preset") /* handled above */;
             OPT("tune")   /* handled above */;
+            OPT("output-depth")   /* handled above */;
+            OPT("recon-y4m-exec") reconPlayCmd = optarg;
             OPT("qpfile")
             {
                 this->qpfile = fopen(optarg, "rb");
                 if (!this->qpfile)
                 {
-                    x265_log(param, X265_LOG_ERROR, "%s qpfile not found or error in opening qp file \n", optarg);
+                    x265_log(param, X265_LOG_ERROR, "%s qpfile not found or error in opening qp file\n", optarg);
                     return false;
                 }
             }
             else
-                bError |= !!x265_param_parse(param, long_options[long_options_index].name, optarg);
+                bError |= !!api->param_parse(param, long_options[long_options_index].name, optarg);
 
             if (bError)
             {
@@ -639,36 +500,32 @@ bool CLIOptions::parse(int argc, char **argv, x265_param* param)
 
     if (optind < argc && !inputfn)
         inputfn = argv[optind++];
-    if (optind < argc && !bitstreamfn)
-        bitstreamfn = argv[optind++];
+    if (optind < argc && !outputfn)
+        outputfn = argv[optind++];
     if (optind < argc)
     {
         x265_log(param, X265_LOG_WARNING, "extra unused command arguments given <%s>\n", argv[optind]);
         return true;
     }
 
-    if (argc <= 1 || help)
+    if (argc <= 1)
+    {
+        api->param_default(param);
+        printVersion(param, api);
         showHelp(param);
+    }
 
-    if (inputfn == NULL || bitstreamfn == NULL)
+    if (inputfn == NULL || outputfn == NULL)
     {
         x265_log(param, X265_LOG_ERROR, "input or output file not specified, try -V for help\n");
         return true;
     }
 
-#if HIGH_BIT_DEPTH
-    if (param->internalBitDepth != 10)
+    if (param->internalBitDepth != api->bit_depth)
     {
-        x265_log(param, X265_LOG_ERROR, "Only bit depths of 10 are supported in this build\n");
+        x265_log(param, X265_LOG_ERROR, "Only bit depths of %d are supported in this build\n", api->bit_depth);
         return true;
     }
-#else
-    if (param->internalBitDepth != 8)
-    {
-        x265_log(param, X265_LOG_ERROR, "Only bit depths of 8 are supported in this build\n");
-        return true;
-    }
-#endif // if HIGH_BIT_DEPTH
 
     InputFileInfo info;
     info.filename = inputfn;
@@ -684,7 +541,7 @@ bool CLIOptions::parse(int argc, char **argv, x265_param* param)
     info.frameCount = 0;
     getParamAspectRatio(param, info.sarWidth, info.sarHeight);
 
-    this->input = Input::open(info, this->bForceY4m);
+    this->input = InputFile::open(info, this->bForceY4m);
     if (!this->input || this->input->isFail())
     {
         x265_log(param, X265_LOG_ERROR, "unable to open input file <%s>\n", inputfn);
@@ -714,7 +571,11 @@ bool CLIOptions::parse(int argc, char **argv, x265_param* param)
         this->framesToBeEncoded = info.frameCount - seek;
     param->totalFrames = this->framesToBeEncoded;
 
-    if (x265_param_apply_profile(param, profile))
+    /* Force CFR until we have support for VFR */
+    info.timebaseNum = param->fpsDenom;
+    info.timebaseDenom = param->fpsNum;
+
+    if (api->param_apply_profile(param, profile))
         return true;
 
     if (param->logLevel >= X265_LOG_INFO)
@@ -733,7 +594,7 @@ bool CLIOptions::parse(int argc, char **argv, x265_param* param)
         else
             sprintf(buf + p, " frames %u - %d of %d", this->seek, this->seek + this->framesToBeEncoded - 1, info.frameCount);
 
-        fprintf(stderr, "%s  [info]: %s\n", input->getName(), buf);
+        general_log(param, input->getName(), X265_LOG_INFO, "%s\n", buf);
     }
 
     this->input->startReader();
@@ -742,26 +603,28 @@ bool CLIOptions::parse(int argc, char **argv, x265_param* param)
     {
         if (reconFileBitDepth == 0)
             reconFileBitDepth = param->internalBitDepth;
-        this->recon = Output::open(reconfn, param->sourceWidth, param->sourceHeight, reconFileBitDepth,
-                                   param->fpsNum, param->fpsDenom, param->internalCsp);
+        this->recon = ReconFile::open(reconfn, param->sourceWidth, param->sourceHeight, reconFileBitDepth,
+                                      param->fpsNum, param->fpsDenom, param->internalCsp);
         if (this->recon->isFail())
         {
-            x265_log(param, X265_LOG_WARNING, "unable to write reconstruction file\n");
+            x265_log(param, X265_LOG_WARNING, "unable to write reconstructed outputs file\n");
             this->recon->release();
             this->recon = 0;
         }
         else
-            fprintf(stderr, "%s  [info]: reconstructed images %dx%d fps %d/%d %s\n", this->recon->getName(),
+            general_log(param, this->recon->getName(), X265_LOG_INFO,
+                    "reconstructed images %dx%d fps %d/%d %s\n",
                     param->sourceWidth, param->sourceHeight, param->fpsNum, param->fpsDenom,
                     x265_source_csp_names[param->internalCsp]);
     }
 
-    this->bitstreamFile.open(bitstreamfn, std::fstream::binary | std::fstream::out);
-    if (!this->bitstreamFile)
+    this->output = OutputFile::open(outputfn, info);
+    if (this->output->isFail())
     {
-        x265_log(NULL, X265_LOG_ERROR, "failed to open bitstream file <%s> for writing\n", bitstreamfn);
+        x265_log(param, X265_LOG_ERROR, "failed to open output file <%s> for writing\n", outputfn);
         return true;
     }
+    general_log(param, this->output->getName(), X265_LOG_INFO, "output file: %s\n", outputfn);
     return false;
 }
 
@@ -799,36 +662,74 @@ bool CLIOptions::parseQPFile(x265_picture &pic_org)
     return 1;
 }
 
+/* CLI return codes:
+ *
+ * 0 - encode successful
+ * 1 - unable to parse command line
+ * 2 - unable to open encoder
+ * 3 - unable to generate stream headers
+ * 4 - encoder abort
+ * 5 - unable to open csv file */
+
 int main(int argc, char **argv)
 {
 #if HAVE_VLD
     // This uses Microsoft's proprietary WCHAR type, but this only builds on Windows to start with
     VLDSetReportOptions(VLD_OPT_REPORT_TO_DEBUGGER | VLD_OPT_REPORT_TO_FILE, L"x265_leaks.txt");
 #endif
-    PPA_INIT();
+    PROFILE_INIT();
+    THREAD_NAME("API", 0);
 
-    x265_param *param = x265_param_alloc();
+    GetConsoleTitle(orgConsoleTitle, CONSOLE_TITLE_SIZE);
+    SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED);
+
+    ReconPlay* reconPlay = NULL;
     CLIOptions cliopt;
 
-    if (cliopt.parse(argc, argv, param))
+    if (cliopt.parse(argc, argv))
     {
         cliopt.destroy();
-        x265_param_free(param);
+        if (cliopt.api)
+            cliopt.api->param_free(cliopt.param);
         exit(1);
     }
 
-    x265_encoder *encoder = x265_encoder_open(param);
+    x265_param* param = cliopt.param;
+    const x265_api* api = cliopt.api;
+
+    /* This allows muxers to modify bitstream format */
+    cliopt.output->setParam(param);
+
+    if (cliopt.reconPlayCmd)
+        reconPlay = new ReconPlay(cliopt.reconPlayCmd, *param);
+
+    if (cliopt.csvfn)
+    {
+        if (cliopt.parseCSVFile())
+        {
+            cliopt.destroy();
+            if (cliopt.api)
+                cliopt.api->param_free(cliopt.param);
+            exit(5);
+        }
+    }
+
+    /* note: we could try to acquire a different libx265 API here based on
+     * the profile found during option parsing, but it must be done before
+     * opening an encoder */
+
+    x265_encoder *encoder = api->encoder_open(param);
     if (!encoder)
     {
         x265_log(param, X265_LOG_ERROR, "failed to open encoder\n");
         cliopt.destroy();
-        x265_param_free(param);
-        x265_cleanup();
-        exit(1);
+        api->param_free(param);
+        api->cleanup();
+        exit(2);
     }
 
     /* get the encoder parameters post-initialization */
-    x265_encoder_parameters(encoder, param);
+    api->encoder_parameters(encoder, param);
 
     /* Control-C handler */
     if (signal(SIGINT, sigint_handler) == SIG_ERR)
@@ -837,35 +738,29 @@ int main(int argc, char **argv)
     x265_picture pic_orig, pic_out;
     x265_picture *pic_in = &pic_orig;
     /* Allocate recon picture if analysisMode is enabled */
-    x265_picture *pic_recon = (cliopt.recon || !!param->analysisMode) ? &pic_out : NULL;
+    std::priority_queue<int64_t>* pts_queue = cliopt.output->needPTS() ? new std::priority_queue<int64_t>() : NULL;
+    x265_picture *pic_recon = (cliopt.recon || !!param->analysisMode || pts_queue || reconPlay || cliopt.csvLogLevel) ? &pic_out : NULL;
     uint32_t inFrameCount = 0;
     uint32_t outFrameCount = 0;
     x265_nal *p_nal;
     x265_stats stats;
     uint32_t nal;
     int16_t *errorBuf = NULL;
+    int ret = 0;
 
     if (!param->bRepeatHeaders)
     {
-        if (x265_encoder_headers(encoder, &p_nal, &nal) < 0)
+        if (api->encoder_headers(encoder, &p_nal, &nal) < 0)
         {
             x265_log(param, X265_LOG_ERROR, "Failure generating stream headers\n");
+            ret = 3;
             goto fail;
         }
         else
-            cliopt.writeNALs(p_nal, nal);
+            cliopt.totalbytes += cliopt.output->writeHeaders(p_nal, nal);
     }
 
-    x265_picture_init(param, pic_in);
-
-    if (param->analysisMode)
-    {
-        if (param->bDistributeModeAnalysis || param->bDistributeMotionEstimation)
-        {
-            x265_log(NULL, X265_LOG_ERROR, "Analysis load/save options incompatible with pmode/pme");
-            goto fail;
-        }
-    }
+    api->picture_init(param, pic_in);
 
     if (cliopt.bDither)
     {
@@ -880,7 +775,7 @@ int main(int argc, char **argv)
     while (pic_in && !b_ctrl_c)
     {
         pic_orig.poc = inFrameCount;
-        if (cliopt.qpfile && !param->rc.bStatRead)
+        if (cliopt.qpfile)
         {
             if (!cliopt.parseQPFile(pic_orig))
             {
@@ -899,41 +794,76 @@ int main(int argc, char **argv)
 
         if (pic_in)
         {
-            if (pic_in->bitDepth > X265_DEPTH && cliopt.bDither)
+            if (pic_in->bitDepth > param->internalBitDepth && cliopt.bDither)
             {
-                ditherImage(*pic_in, param->sourceWidth, param->sourceHeight, errorBuf, X265_DEPTH);
-                pic_in->bitDepth = X265_DEPTH;
+                ditherImage(*pic_in, param->sourceWidth, param->sourceHeight, errorBuf, param->internalBitDepth);
+                pic_in->bitDepth = param->internalBitDepth;
             }
+            /* Overwrite PTS */
+            pic_in->pts = pic_in->poc;
         }
 
-        int numEncoded = x265_encoder_encode(encoder, &p_nal, &nal, pic_in, pic_recon);
+        int numEncoded = api->encoder_encode(encoder, &p_nal, &nal, pic_in, pic_recon);
         if (numEncoded < 0)
         {
             b_ctrl_c = 1;
+            ret = 4;
             break;
         }
+
+        if (reconPlay && numEncoded)
+            reconPlay->writePicture(*pic_recon);
+
         outFrameCount += numEncoded;
 
         if (numEncoded && pic_recon && cliopt.recon)
             cliopt.recon->writePicture(pic_out);
         if (nal)
-            cliopt.writeNALs(p_nal, nal);
+        {
+            cliopt.totalbytes += cliopt.output->writeFrame(p_nal, nal, pic_out);
+            if (pts_queue)
+            {
+                pts_queue->push(-pic_out.pts);
+                if (pts_queue->size() > 2)
+                    pts_queue->pop();
+            }
+        }
 
-        // Because x265_encoder_encode() lazily encodes entire GOPs, updates are per-GOP
-        cliopt.printStatus(outFrameCount, param);
+        cliopt.printStatus(outFrameCount);
+        if (numEncoded && cliopt.csvLogLevel)
+            cliopt.writeFrameLog(&(pic_recon->frameData));
     }
 
     /* Flush the encoder */
     while (!b_ctrl_c)
     {
-        uint32_t numEncoded = x265_encoder_encode(encoder, &p_nal, &nal, NULL, pic_recon);
+        int numEncoded = api->encoder_encode(encoder, &p_nal, &nal, NULL, pic_recon);
+        if (numEncoded < 0)
+        {
+            ret = 4;
+            break;
+        }
+
+        if (reconPlay && numEncoded)
+            reconPlay->writePicture(*pic_recon);
+
         outFrameCount += numEncoded;
         if (numEncoded && pic_recon && cliopt.recon)
             cliopt.recon->writePicture(pic_out);
         if (nal)
-            cliopt.writeNALs(p_nal, nal);
+        {
+            cliopt.totalbytes += cliopt.output->writeFrame(p_nal, nal, pic_out);
+            if (pts_queue)
+            {
+                pts_queue->push(-pic_out.pts);
+                if (pts_queue->size() > 2)
+                    pts_queue->pop();
+            }
+        }
 
-        cliopt.printStatus(outFrameCount, param);
+        cliopt.printStatus(outFrameCount);
+        if (numEncoded && cliopt.csvLogLevel)
+            cliopt.writeFrameLog(&(pic_recon->frameData));
 
         if (!numEncoded)
             break;
@@ -944,44 +874,45 @@ int main(int argc, char **argv)
         fprintf(stderr, "%*s\r", 80, " ");
 
 fail:
-    x265_encoder_get_stats(encoder, &stats, sizeof(stats));
-    if (param->csvfn && !b_ctrl_c)
-        x265_encoder_log(encoder, argc, argv);
-    x265_encoder_close(encoder);
-    cliopt.bitstreamFile.close();
+
+    delete reconPlay;
+
+    api->encoder_get_stats(encoder, &stats, sizeof(stats));
+    if (cliopt.csvfn && !b_ctrl_c)
+        cliopt.writeLog(argc, argv, &stats);
+    api->encoder_close(encoder);
+
+    int64_t second_largest_pts = 0;
+    int64_t largest_pts = 0;
+    if (pts_queue && pts_queue->size() >= 2)
+    {
+        second_largest_pts = -pts_queue->top();
+        pts_queue->pop();
+        largest_pts = -pts_queue->top();
+        pts_queue->pop();
+        delete pts_queue;
+        pts_queue = NULL;
+    }
+    cliopt.output->closeFile(largest_pts, second_largest_pts);
 
     if (b_ctrl_c)
-        fprintf(stderr, "aborted at input frame %d, output frame %d\n",
-                cliopt.seek + inFrameCount, stats.encodedPictureCount);
+        general_log(param, NULL, X265_LOG_INFO, "aborted at input frame %d, output frame %d\n",
+                    cliopt.seek + inFrameCount, stats.encodedPictureCount);
 
-    if (stats.encodedPictureCount)
-    {
-        printf("\nencoded %d frames in %.2fs (%.2f fps), %.2f kb/s", stats.encodedPictureCount,
-               stats.elapsedEncodeTime, stats.encodedPictureCount / stats.elapsedEncodeTime, stats.bitrate);
-
-        if (param->bEnablePsnr)
-            printf(", Global PSNR: %.3f", stats.globalPsnr);
-
-        if (param->bEnableSsim)
-            printf(", SSIM Mean Y: %.7f (%6.3f dB)", stats.globalSsim, x265_ssim2dB(stats.globalSsim));
-
-        printf("\n");
-    }
-    else
-    {
-        printf("\nencoded 0 frames\n");
-    }
-
-    x265_cleanup(); /* Free library singletons */
+    api->cleanup(); /* Free library singletons */
 
     cliopt.destroy();
 
-    x265_param_free(param);
+    api->param_free(param);
 
     X265_FREE(errorBuf);
+
+    SetConsoleTitle(orgConsoleTitle);
+    SetThreadExecutionState(ES_CONTINUOUS);
 
 #if HAVE_VLD
     assert(VLDReportLeaks() == 0);
 #endif
-    return 0;
+
+    return ret;
 }

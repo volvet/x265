@@ -3,6 +3,7 @@
  *
  * Authors: Steve Borho <steve@borho.org>
  *          Min Chen <chenm003@163.com>
+ *          Praveen Kumar Tiwari <praveen@multicorewareinc.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,7 +30,7 @@
 #include "frame.h"
 #include "entropy.h"
 
-namespace x265 {
+namespace X265_NS {
 // private namespace
 
 enum SAOTypeLen
@@ -51,7 +52,7 @@ enum SAOType
 
 class SAO
 {
-protected:
+public:
 
     enum { SAO_MAX_DEPTH = 4 };
     enum { SAO_BO_BITS  = 5 };
@@ -67,6 +68,8 @@ protected:
     typedef int32_t (PerClass[MAX_NUM_SAO_TYPE][MAX_NUM_SAO_CLASS]);
     typedef int32_t (PerPlane[NUM_PLANE][MAX_NUM_SAO_TYPE][MAX_NUM_SAO_CLASS]);
 
+protected:
+
     /* allocated per part */
     PerClass*   m_count;
     PerClass*   m_offset;
@@ -77,7 +80,7 @@ protected:
     PerPlane*   m_offsetOrgPreDblk;
 
     double      m_depthSaoRate[2][4];
-    pixel*      m_offsetBo;
+    int8_t      m_offsetBo[SAO_NUM_BO_CLASSES];
     int8_t      m_offsetEo[NUM_EDGETYPE];
 
     int         m_numCuInWidth;

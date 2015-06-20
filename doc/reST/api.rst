@@ -72,11 +72,13 @@ blocking and thus this would be less efficient).
 	process. All of the encoders must use the same maximum CTU size
 	because many global variables are configured based on this size.
 	Encoder allocation will fail if a mis-matched CTU size is attempted.
+	If no encoders are open, **x265_cleanup()** can be called to reset
+	the configured CTU size so a new size can be used.
 
 An encoder is allocated by calling **x265_encoder_open()**::
 
 	/* x265_encoder_open:
-	*      create a new encoder handler, all parameters from x265_param are copied */
+	 *      create a new encoder handler, all parameters from x265_param are copied */
 	x265_encoder* x265_encoder_open(x265_param *);
 
 The returned pointer is then passed to all of the functions pertaining
@@ -169,8 +171,26 @@ changes made to the parameters for auto-detection and other reasons::
 	 *      how x265_encoder_open has changed the parameters.
 	 *      note that the data accessible through pointers in the returned param struct
 	 *      (e.g. filenames) should not be modified by the calling application. */
-	void x265_encoder_parameters(x265_encoder *, x265_param *);                                                                      
+	void x265_encoder_parameters(x265_encoder *, x265_param *);
 
+**x265_encoder_reconfig()** may be used to reconfigure encoder parameters mid-encode::
+
+	/* x265_encoder_reconfig:
+	 *       used to modify encoder parameters.
+	 *      various parameters from x265_param are copied.
+	 *      this takes effect immediately, on whichever frame is encoded next;
+	 *      returns 0 on success, negative on parameter validation error.
+	 *
+	 *      not all parameters can be changed; see the actual function for a
+	 *      detailed breakdown.  since not all parameters can be changed, moving
+	 *      from preset to preset may not always fully copy all relevant parameters,
+	 *      but should still work usably in practice. however, more so than for
+	 *      other presets, many of the speed shortcuts used in ultrafast cannot be
+	 *      switched out of; using reconfig to switch between ultrafast and other
+	 *      presets is not recommended without a more fine-grained breakdown of
+	 *      parameters to take this into account. */
+	int x265_encoder_reconfig(x265_encoder *, x265_param *);
+	
 Pictures
 ========
 
@@ -318,13 +338,8 @@ statistics from the encoder::
 Cleanup
 =======
 
-At the end of the encode, the application will want to trigger logging
-of the final encode statistics, if :option:`--csv` had been specified::
-
 	/* x265_encoder_log:
-	 *       write a line to the configured CSV file.  If a CSV filename was not
-	 *       configured, or file open failed, or the log level indicated frame level
-	 *       logging, this function will perform no write. */
+	 *       This function is now deprecated */
 	void x265_encoder_log(x265_encoder *encoder, int argc, char **argv);
 
 Finally, the encoder must be closed in order to free all of its
@@ -337,10 +352,119 @@ handle must be discarded::
 	void x265_encoder_close(x265_encoder *);
 
 When the application has completed all encodes, it should call
-**x265_cleanup()** to free process global resources like the thread pool;
-particularly if a memory-leak detection tool is being used::
+**x265_cleanup()** to free process global, particularly if a memory-leak
+detection tool is being used. **x265_cleanup()** also resets the saved
+CTU size so it will be possible to create a new encoder with a different
+CTU size::
 
-	/***
-	 * Release library static allocations
-	 */
+	/* x265_cleanup:
+	 *     release library static allocations, reset configured CTU size */
 	void x265_cleanup(void);
+
+
+Multi-library Interface
+=======================
+
+If your application might want to make a runtime selection between
+a number of libx265 libraries (perhaps 8bpp and 16bpp), then you will
+want to use the multi-library interface.
+
+Instead of directly using all of the **x265_** methods documented
+above, you query an x265_api structure from your libx265 and then use
+the function pointers within that structure of the same name, but
+without the **x265_** prefix. So **x265_param_default()** becomes
+**api->param_default()**. The key method is x265_api_get()::
+
+    /* x265_api_get:
+     *   Retrieve the programming interface for a linked x265 library.
+     *   May return NULL if no library is available that supports the
+     *   requested bit depth. If bitDepth is 0, the function is guarunteed
+     *   to return a non-NULL x265_api pointer from the system default
+     *   libx265 */
+    const x265_api* x265_api_get(int bitDepth);
+
+Note that using this multi-library API in your application is only the
+first step.
+
+Your application must link to one build of libx265 (statically or 
+dynamically) and this linked version of libx265 will support one 
+bit-depth (8 or 10 bits). 
+
+Your application must now request the API for the bitDepth you would 
+prefer the encoder to use (8 or 10). If the requested bitdepth is zero, 
+or if it matches the bitdepth of the system default libx265 (the 
+currently linked library), then this library will be used for encode.
+If you request a different bit-depth, the linked libx265 will attempt 
+to dynamically bind a shared library with a name appropriate for the 
+requested bit-depth:
+
+    8-bit:  libx265_main.dll
+    10-bit: libx265_main10.dll
+
+    (the shared library extension is obviously platform specific. On
+    Linux it is .so while on Mac it is .dylib)
+
+For example on Windows, one could package together an x265.exe
+statically linked against the 8bpp libx265 together with a
+libx265_main10.dll in the same folder, and this executable would be able
+to encode main and main10 bitstreams.
+
+On Linux, x265 packagers could install 8bpp static and shared libraries
+under the name libx265 (so all applications link against 8bpp libx265)
+and then also install libx265_main10.so (symlinked to its numbered solib).
+Thus applications which use x265_api_get() will be able to generate main
+or main10 bitstreams.
+
+There is a second bit-depth introspection method that is designed for
+applications which need more flexibility in API versioning.  If you use
+the public API described at the top of this page or x265_api_get() then
+your application must be recompiled each time x265 changes its public
+API and bumps its build number (X265_BUILD, which is also the SONAME on
+POSIX systems).  But if you use **x265_api_query** and dynamically link to
+libx265 (use dlopen() on POSIX or LoadLibrary() on Windows) your
+application is no longer directly tied to the API version of x265.h that
+it was compiled against.
+
+	/* x265_api_query:
+	 *   Retrieve the programming interface for a linked x265 library, like
+	 *   x265_api_get(), except this function accepts X265_BUILD as the second
+	 *   argument rather than using the build number as part of the function name.
+	 *   Applications which dynamically link to libx265 can use this interface to
+	 *   query the library API and achieve a relative amount of version skew
+	 *   flexibility. The function may return NULL if the library determines that
+	 *   the apiVersion that your application was compiled against is not compatible
+	 *   with the library you have linked with.
+	 *
+	 *   api_major_version will be incremented any time non-backward compatible
+	 *   changes are made to any public structures or functions. If
+	 *   api_major_version does not match X265_MAJOR_VERSION from the x265.h your
+	 *   application compiled against, your application must not use the returned
+	 *   x265_api pointer.
+	 *
+	 *   Users of this API *must* also validate the sizes of any structures which
+	 *   are not treated as opaque in application code. For instance, if your
+	 *   application dereferences a x265_param pointer, then it must check that
+	 *   api->sizeof_param matches the sizeof(x265_param) that your application
+	 *   compiled with. */
+	const x265_api* x265_api_query(int bitDepth, int apiVersion, int* err);
+
+A number of validations must be performed on the returned API structure
+in order to determine if it is safe for use by your application. If you
+do not perform these checks, your application is liable to crash::
+
+	if (api->api_major_version != X265_MAJOR_VERSION) /* do not use */
+	if (api->sizeof_param != sizeof(x265_param))      /* do not use */
+	if (api->sizeof_picture != sizeof(x265_picture))  /* do not use */
+	if (api->sizeof_stats != sizeof(x265_stats))      /* do not use */
+	if (api->sizeof_zone != sizeof(x265_zone))        /* do not use */
+	etc.
+
+Note that if your application does not directly allocate or dereference
+one of these structures, if it treats the structure as opaque or does
+not use it at all, then it can skip the size check for that structure.
+
+In particular, if your application uses api->param_alloc(),
+api->param_free(), api->param_parse(), etc and never directly accesses
+any x265_param fields, then it can skip the check on the
+sizeof(x265_parm) and thereby ignore changes to that structure (which
+account for a large percentage of X265_BUILD bumps).

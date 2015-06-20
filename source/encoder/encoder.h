@@ -32,7 +32,7 @@
 
 struct x265_encoder {};
 
-namespace x265 {
+namespace X265_NS {
 // private namespace
 extern const char g_sliceTypeToChar[3];
 
@@ -70,7 +70,6 @@ class DPB;
 class Lookahead;
 class RateControl;
 class ThreadPool;
-struct ThreadLocalData;
 
 class Encoder : public x265_encoder
 {
@@ -86,11 +85,12 @@ public:
     int64_t            m_prevReorderedPts[2];
 
     ThreadPool*        m_threadPool;
-    FrameEncoder*      m_frameEncoder;
+    FrameEncoder*      m_frameEncoder[X265_MAX_FRAME_THREADS];
     DPB*               m_dpb;
 
     Frame*             m_exportedPic;
 
+    int                m_numPools;
     int                m_curEncoder;
 
     /* cached PicYuv offset arrays, shared by all instances of
@@ -105,7 +105,6 @@ public:
     EncStats           m_analyzeI;
     EncStats           m_analyzeP;
     EncStats           m_analyzeB;
-    FILE*              m_csvfpt;
     int64_t            m_encodeStartTime;
 
     // weighted prediction
@@ -120,42 +119,38 @@ public:
     PPS                m_pps;
     NALList            m_nalList;
     ScalingList        m_scalingList;      // quantization matrix information
-    int                m_numThreadLocalData;
 
     int                m_lastBPSEI;
     uint32_t           m_numDelayedPic;
 
     x265_param*        m_param;
+    x265_param*        m_latestParam;
     RateControl*       m_rateControl;
-    ThreadLocalData*   m_threadLocalData;
     Lookahead*         m_lookahead;
     Window             m_conformanceWindow;
 
+    bool               m_bZeroLatency;     // x265_encoder_encode() returns NALs for the input picture, zero lag
     bool               m_aborted;          // fatal error detected
+    bool               m_reconfigured;      // reconfigure of encoder detected
 
     Encoder();
-
     ~Encoder() {}
 
     void create();
+    void stopJobs();
     void destroy();
-    void init();
 
     int encode(const x265_picture* pic, x265_picture *pic_out);
+
+    int reconfigureParam(x265_param* encParam, x265_param* param);
 
     void getStreamHeaders(NALList& list, Entropy& sbacCoder, Bitstream& bs);
 
     void fetchStats(x265_stats* stats, size_t statsSizeBytes);
 
-    void writeLog(int argc, char **argv);
-
     void printSummary();
 
     char* statsString(EncStats&, char*);
-
-    char* statsCSVString(EncStats& stat, char* buffer);
-
-    void setThreadPool(ThreadPool* p) { m_threadPool = p; }
 
     void configure(x265_param *param);
 
@@ -169,10 +164,11 @@ public:
 
     void writeAnalysisFile(x265_analysis_data* pic);
 
-    void finishFrameStats(Frame* pic, FrameEncoder *curEncoder, uint64_t bits);
+    void finishFrameStats(Frame* pic, FrameEncoder *curEncoder, uint64_t bits, x265_frame_stats* frameStats);
 
 protected:
 
+    void initVPS(VPS *vps);
     void initSPS(SPS *sps);
     void initPPS(PPS *pps);
 };

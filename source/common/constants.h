@@ -1,5 +1,5 @@
 /*****************************************************************************
- * Copyright (C) 2014 x265 project
+ * Copyright (C) 2015 x265 project
  *
  * Authors: Steve Borho <steve@borho.org>
  *
@@ -26,8 +26,10 @@
 
 #include "common.h"
 
-namespace x265 {
+namespace X265_NS {
 // private namespace
+
+extern int g_ctuSizeConfigured;
 
 void initZscanToRaster(uint32_t maxFullDepth, uint32_t depth, uint32_t startVal, uint32_t*& curIdx);
 void initRasterToZscan(uint32_t maxFullDepth);
@@ -55,7 +57,7 @@ extern const uint8_t g_log2Size[MAX_CU_SIZE + 1]; // from size to log2(size)
 extern uint32_t g_maxLog2CUSize;
 extern uint32_t g_maxCUSize;
 extern uint32_t g_maxCUDepth;
-extern uint32_t g_maxFullDepth;
+extern uint32_t g_unitSizeDepth; // Depth at which 4x4 unit occurs from max CU size
 
 extern const int16_t g_t4[4][4];
 extern const int16_t g_t8[8][8];
@@ -81,9 +83,9 @@ extern const int16_t g_chromaFilter[8][NTAPS_CHROMA];  // Chroma filter taps
 extern const uint16_t* const g_scanOrder[NUM_SCAN_TYPE][NUM_SCAN_SIZE];
 extern const uint16_t* const g_scanOrderCG[NUM_SCAN_TYPE][NUM_SCAN_SIZE];
 extern const uint16_t g_scan8x8diag[8 * 8];
-extern const uint16_t g_scan4x4[NUM_SCAN_TYPE][4 * 4];
+extern const uint16_t g_scan4x4[NUM_SCAN_TYPE + 1][4 * 4];  // +1 for safe buffer area for codeCoeffNxN assembly optimize, there have up to 15 bytes beyond bound read
 
-extern const uint8_t g_minInGroup[10];
+extern const uint8_t g_lastCoeffTable[32];
 extern const uint8_t g_goRiceRange[5]; // maximum value coded with Rice codes
 
 // CABAC tables

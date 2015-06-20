@@ -3,6 +3,7 @@
  *
  * Authors: Steve Borho <steve@borho.org>
  *          Min Chen <chenm003@163.com>
+ *          Praveen Kumar Tiwari <praveen@multicorewareinc.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -36,20 +37,30 @@ inline int32_t roundIBDI(int32_t num, int32_t den)
 }
 
 /* get the sign of input variable (TODO: this is a dup, make common) */
-inline int signOf(int x)
+inline int8_t signOf(int x)
 {
     return (x >> 31) | ((int)((((uint32_t)-x)) >> 31));
+}
+
+inline int signOf2(const int a, const int b)
+{
+    // NOTE: don't reorder below compare, both ICL, VC, GCC optimize strong depends on order!
+    int r = 0;
+    if (a < b)
+        r = -1;
+    if (a > b)
+        r = 1;
+    return r;
 }
 
 inline int64_t estSaoDist(int32_t count, int offset, int32_t offsetOrg)
 {
     return (count * offset - offsetOrg * 2) * offset;
 }
-
 } // end anonymous namespace
 
 
-namespace x265 {
+namespace X265_NS {
 
 const uint32_t SAO::s_eoTable[NUM_EDGETYPE] =
 {
@@ -73,7 +84,6 @@ SAO::SAO()
     m_param = NULL;
     m_clipTable = NULL;
     m_clipTableBase = NULL;
-    m_offsetBo = NULL;
     m_tmpU1[0] = NULL;
     m_tmpU1[1] = NULL;
     m_tmpU1[2] = NULL;
@@ -107,15 +117,17 @@ bool SAO::create(x265_param* param)
     int numCtu = m_numCuInWidth * m_numCuInHeight;
 
     CHECKED_MALLOC(m_clipTableBase,  pixel, maxY + 2 * rangeExt);
-    CHECKED_MALLOC(m_offsetBo,       pixel, maxY + 2 * rangeExt);
 
     CHECKED_MALLOC(m_tmpL1, pixel, g_maxCUSize + 1);
     CHECKED_MALLOC(m_tmpL2, pixel, g_maxCUSize + 1);
 
     for (int i = 0; i < 3; i++)
     {
-        CHECKED_MALLOC(m_tmpU1[i], pixel, m_param->sourceWidth);
-        CHECKED_MALLOC(m_tmpU2[i], pixel, m_param->sourceWidth);
+        // SAO asm code will read 1 pixel before and after, so pad by 2
+        CHECKED_MALLOC(m_tmpU1[i], pixel, m_param->sourceWidth + 2);
+        m_tmpU1[i] += 1;
+        CHECKED_MALLOC(m_tmpU2[i], pixel, m_param->sourceWidth + 2);
+        m_tmpU2[i] += 1;
     }
 
     CHECKED_MALLOC(m_count, PerClass, NUM_PLANE);
@@ -145,15 +157,14 @@ fail:
 void SAO::destroy()
 {
     X265_FREE(m_clipTableBase);
-    X265_FREE(m_offsetBo);
 
     X265_FREE(m_tmpL1);
     X265_FREE(m_tmpL2);
 
     for (int i = 0; i < 3; i++)
     {
-        X265_FREE(m_tmpU1[i]);
-        X265_FREE(m_tmpU2[i]);
+        if (m_tmpU1[i]) X265_FREE(m_tmpU1[i] - 1);
+        if (m_tmpU2[i]) X265_FREE(m_tmpU2[i] - 1);
     }
 
     X265_FREE(m_count);
@@ -176,8 +187,11 @@ void SAO::allocSaoParam(SAOParam* saoParam) const
 void SAO::startSlice(Frame* frame, Entropy& initState, int qp)
 {
     Slice* slice = frame->m_encData->m_slice;
-
-    int qpCb = Clip3(0, QP_MAX_MAX, qp + slice->m_pps->chromaQpOffset[0]);
+    int qpCb = qp;
+    if (m_param->internalCsp == X265_CSP_I420)
+        qpCb = x265_clip3(QP_MIN, QP_MAX_MAX, (int)g_chromaScale[qp + slice->m_pps->chromaQpOffset[0]]);
+    else
+        qpCb = X265_MIN(qp + slice->m_pps->chromaQpOffset[0], QP_MAX_SPEC);
     m_lumaLambda = x265_lambda2_tab[qp];
     m_chromaLambda = x265_lambda2_tab[qpCb]; // Use Cb QP for SAO chroma
     m_frame = frame;
@@ -254,8 +268,10 @@ void SAO::processSaoCu(int addr, int typeIdx, int plane)
     pixel* tmpL;
     pixel* tmpU;
 
-    int32_t _upBuff1[MAX_CU_SIZE + 2], *upBuff1 = _upBuff1 + 1;
-    int32_t _upBufft[MAX_CU_SIZE + 2], *upBufft = _upBufft + 1;
+    int8_t _upBuff1[MAX_CU_SIZE + 2], *upBuff1 = _upBuff1 + 1, signLeft1[2];
+    int8_t _upBufft[MAX_CU_SIZE + 2], *upBufft = _upBufft + 1;
+
+    memset(_upBuff1 + MAX_CU_SIZE, 0, 2 * sizeof(int8_t)); /* avoid valgrind uninit warnings */
 
     {
         const pixel* recR = &rec[ctuWidth - 1];
@@ -273,7 +289,7 @@ void SAO::processSaoCu(int addr, int typeIdx, int plane)
     {
     case SAO_EO_0: // dir: -
     {
-        pixel firstPxl = 0, lastPxl = 0;
+        pixel firstPxl = 0, lastPxl = 0, row1FirstPxl = 0, row1LastPxl = 0;
         startX = !lpelx;
         endX   = (rpelx == picWidth) ? ctuWidth - 1 : ctuWidth;
         if (ctuWidth & 15)
@@ -295,25 +311,38 @@ void SAO::processSaoCu(int addr, int typeIdx, int plane)
         }
         else
         {
-            for (y = 0; y < ctuHeight; y++)
+            for (y = 0; y < ctuHeight; y += 2)
             {
-                int signLeft = signOf(rec[startX] - tmpL[y]);
+                signLeft1[0] = signOf(rec[startX] - tmpL[y]);
+                signLeft1[1] = signOf(rec[stride + startX] - tmpL[y + 1]);
 
                 if (!lpelx)
+                {
                     firstPxl = rec[0];
+                    row1FirstPxl = rec[stride];
+                }
 
                 if (rpelx == picWidth)
+                {
                     lastPxl = rec[ctuWidth - 1];
+                    row1LastPxl = rec[stride + ctuWidth - 1];
+                }
 
-                primitives.saoCuOrgE0(rec, m_offsetEo, ctuWidth, (int8_t)signLeft);
+                primitives.saoCuOrgE0(rec, m_offsetEo, ctuWidth, signLeft1, stride);
 
                 if (!lpelx)
+                {
                     rec[0] = firstPxl;
+                    rec[stride] = row1FirstPxl;
+                }
 
                 if (rpelx == picWidth)
+                {
                     rec[ctuWidth - 1] = lastPxl;
+                    rec[stride + ctuWidth - 1] = row1LastPxl;
+                }
 
-                rec += stride;
+                rec += 2 * stride;
             }
         }
         break;
@@ -325,21 +354,37 @@ void SAO::processSaoCu(int addr, int typeIdx, int plane)
         if (!tpely)
             rec += stride;
 
-        for (x = 0; x < ctuWidth; x++)
-            upBuff1[x] = signOf(rec[x] - tmpU[x]);
-
-        for (y = startY; y < endY; y++)
+        if (ctuWidth & 15)
         {
             for (x = 0; x < ctuWidth; x++)
+                upBuff1[x] = signOf(rec[x] - tmpU[x]);
+
+            for (y = startY; y < endY; y++)
             {
-                int signDown = signOf(rec[x] - rec[x + stride]);
-                int edgeType = signDown + upBuff1[x] + 2;
-                upBuff1[x] = -signDown;
+                for (x = 0; x < ctuWidth; x++)
+                {
+                    int8_t signDown = signOf(rec[x] - rec[x + stride]);
+                    int edgeType = signDown + upBuff1[x] + 2;
+                    upBuff1[x] = -signDown;
 
-                rec[x] = m_clipTable[rec[x] + m_offsetEo[edgeType]];
+                    rec[x] = m_clipTable[rec[x] + m_offsetEo[edgeType]];
+                }
+
+                rec += stride;
             }
+        }
+        else
+        {
+            primitives.sign(upBuff1, rec, tmpU, ctuWidth);
 
-            rec += stride;
+            int diff = (endY - startY) % 2;
+            for (y = startY; y < endY - diff; y += 2)
+            {
+                primitives.saoCuOrgE1_2Rows(rec, upBuff1, m_offsetEo, stride, ctuWidth);
+                rec += 2 * stride;
+            }
+            if (diff & 1)
+                primitives.saoCuOrgE1(rec, upBuff1, m_offsetEo, stride, ctuWidth);
         }
 
         break;
@@ -355,25 +400,62 @@ void SAO::processSaoCu(int addr, int typeIdx, int plane)
         if (!tpely)
             rec += stride;
 
-        for (x = startX; x < endX; x++)
-            upBuff1[x] = signOf(rec[x] - tmpU[x - 1]);
-
-        for (y = startY; y < endY; y++)
+        if (!(ctuWidth & 15))
         {
-            upBufft[startX] = signOf(rec[stride + startX] - tmpL[y]);
+            int8_t firstSign, lastSign;
+
+            if (!lpelx)
+                firstSign = upBuff1[0];
+
+            if (rpelx == picWidth)
+                lastSign = upBuff1[ctuWidth - 1];
+
+            primitives.sign(upBuff1, rec, &tmpU[- 1], ctuWidth);
+
+            if (!lpelx)
+                upBuff1[0] = firstSign;
+
+            if (rpelx == picWidth)
+                upBuff1[ctuWidth - 1] = lastSign;
+        }
+        else
+        {
             for (x = startX; x < endX; x++)
-            {
-                int signDown = signOf(rec[x] - rec[x + stride + 1]);
-                int edgeType = signDown + upBuff1[x] + 2;
-                upBufft[x + 1] = -signDown;
-                rec[x] = m_clipTable[rec[x] + m_offsetEo[edgeType]];
-            }
-
-            std::swap(upBuff1, upBufft);
-
-            rec += stride;
+                upBuff1[x] = signOf(rec[x] - tmpU[x - 1]);
         }
 
+        if (ctuWidth & 15)
+        {
+             for (y = startY; y < endY; y++)
+             {
+                 upBufft[startX] = signOf(rec[stride + startX] - tmpL[y]);
+                 for (x = startX; x < endX; x++)
+                 {
+                     int8_t signDown = signOf(rec[x] - rec[x + stride + 1]);
+                     int edgeType = signDown + upBuff1[x] + 2;
+                     upBufft[x + 1] = -signDown;
+                     rec[x] = m_clipTable[rec[x] + m_offsetEo[edgeType]];
+                 }
+
+                 std::swap(upBuff1, upBufft);
+
+                 rec += stride;
+             }
+        }
+        else
+        {
+            for (y = startY; y < endY; y++)
+            {
+                int8_t iSignDown2 = signOf(rec[stride + startX] - tmpL[y]);
+
+                primitives.saoCuOrgE2[endX > 16](rec + startX, upBufft + startX, upBuff1 + startX, m_offsetEo, endX - startX, stride);
+
+                upBufft[startX] = iSignDown2;
+
+                std::swap(upBuff1, upBufft);
+                rec += stride;
+            }
+        }
         break;
     }
     case SAO_EO_3: // dir: 45
@@ -387,43 +469,92 @@ void SAO::processSaoCu(int addr, int typeIdx, int plane)
         if (!tpely)
             rec += stride;
 
-        for (x = startX - 1; x < endX; x++)
-            upBuff1[x] = signOf(rec[x] - tmpU[x + 1]);
-
-        for (y = startY; y < endY; y++)
+        if (ctuWidth & 15)
         {
-            x = startX;
-            int signDown = signOf(rec[x] - tmpL[y + 1]);
-            int edgeType = signDown + upBuff1[x] + 2;
-            upBuff1[x - 1] = -signDown;
-            rec[x] = m_clipTable[rec[x] + m_offsetEo[edgeType]];
-            for (x = startX + 1; x < endX; x++)
+            for (x = startX - 1; x < endX; x++)
+                upBuff1[x] = signOf(rec[x] - tmpU[x + 1]);
+
+            for (y = startY; y < endY; y++)
             {
-                signDown = signOf(rec[x] - rec[x + stride - 1]);
-                edgeType = signDown + upBuff1[x] + 2;
+                x = startX;
+                int8_t signDown = signOf(rec[x] - tmpL[y + 1]);
+                int edgeType = signDown + upBuff1[x] + 2;
                 upBuff1[x - 1] = -signDown;
                 rec[x] = m_clipTable[rec[x] + m_offsetEo[edgeType]];
+
+                for (x = startX + 1; x < endX; x++)
+                {
+                    signDown = signOf(rec[x] - rec[x + stride - 1]);
+                    edgeType = signDown + upBuff1[x] + 2;
+                    upBuff1[x - 1] = -signDown;
+                    rec[x] = m_clipTable[rec[x] + m_offsetEo[edgeType]];
+                }
+
+                upBuff1[endX - 1] = signOf(rec[endX - 1 + stride] - rec[endX]);
+
+                rec += stride;
             }
+        }
+        else
+        {
+            int8_t firstSign, lastSign;
 
-            upBuff1[endX - 1] = signOf(rec[endX - 1 + stride] - rec[endX]);
+            if (lpelx)
+                firstSign = signOf(rec[-1] - tmpU[0]);
+            if (rpelx == picWidth)
+                lastSign = upBuff1[ctuWidth - 1];
 
-            rec += stride;
+            primitives.sign(upBuff1, rec, &tmpU[1], ctuWidth);
+
+            if (lpelx)
+                upBuff1[-1] = firstSign;
+            if (rpelx == picWidth)
+                upBuff1[ctuWidth - 1] = lastSign;
+
+            for (y = startY; y < endY; y++)
+            {
+                x = startX;
+                int8_t signDown = signOf(rec[x] - tmpL[y + 1]);
+                int edgeType = signDown + upBuff1[x] + 2;
+                upBuff1[x - 1] = -signDown;
+                rec[x] = m_clipTable[rec[x] + m_offsetEo[edgeType]];
+
+                primitives.saoCuOrgE3[endX > 16](rec, upBuff1, m_offsetEo, stride - 1, startX, endX);
+
+                upBuff1[endX - 1] = signOf(rec[endX - 1 + stride] - rec[endX]);
+
+                rec += stride;
+            }
         }
 
         break;
     }
     case SAO_BO:
     {
-        const pixel* offsetBo = m_offsetBo;
+        const int8_t* offsetBo = m_offsetBo;
 
-        for (y = 0; y < ctuHeight; y++)
+        if (ctuWidth & 15)
         {
-            for (x = 0; x < ctuWidth; x++)
-                rec[x] = offsetBo[rec[x]];
-
-            rec += stride;
+            #define SAO_BO_BITS 5
+            const int boShift = X265_DEPTH - SAO_BO_BITS;
+            for (y = 0; y < ctuHeight; y++)
+            {
+                for (x = 0; x < ctuWidth; x++)
+                {
+                     int val = rec[x] + offsetBo[rec[x] >> boShift];
+                     if (val < 0)
+                         val = 0;
+                     else if (val > ((1 << X265_DEPTH) - 1))
+                         val = ((1 << X265_DEPTH) - 1);
+                     rec[x] = (pixel)val;
+                }
+                rec += stride;
+            }
         }
-
+        else
+        {
+            primitives.saoCuOrgB0(rec, offsetBo, ctuWidth, ctuHeight, stride);
+        }
         break;
     }
     default: break;
@@ -466,8 +597,6 @@ void SAO::processSaoUnitRow(SaoCtuParam* ctuParam, int idxY, int plane)
 
     memcpy(m_tmpU2[plane], rec, sizeof(pixel) * picWidth);
 
-    const int boShift = X265_DEPTH - SAO_BO_BITS;
-
     for (int idxX = 0; idxX < m_numCuInWidth; idxX++)
     {
         addr = idxY * m_numCuInWidth + idxX;
@@ -481,15 +610,10 @@ void SAO::processSaoUnitRow(SaoCtuParam* ctuParam, int idxY, int plane)
             {
                 if (typeIdx == SAO_BO)
                 {
-                    pixel* offsetBo = m_offsetBo;
-                    int offset[SAO_NUM_BO_CLASSES];
-                    memset(offset, 0, sizeof(offset));
+                    memset(m_offsetBo, 0, sizeof(m_offsetBo));
 
                     for (int i = 0; i < SAO_NUM_OFFSET; i++)
-                        offset[((ctuParam[addr].bandPos + i) & (SAO_NUM_BO_CLASSES - 1))] = ctuParam[addr].offset[i] << SAO_BIT_INC;
-
-                    for (int i = 0; i < (1 << X265_DEPTH); i++)
-                        offsetBo[i] = m_clipTable[i + offset[i >> boShift]];
+                        m_offsetBo[((ctuParam[addr].bandPos + i) & (SAO_NUM_BO_CLASSES - 1))] = (int8_t)(ctuParam[addr].offset[i] << SAO_BIT_INC);
                 }
                 else // if (typeIdx == SAO_EO_0 || typeIdx == SAO_EO_1 || typeIdx == SAO_EO_2 || typeIdx == SAO_EO_3)
                 {
@@ -579,8 +703,13 @@ void SAO::calcSaoStatsCu(int addr, int plane)
     int skipB = plane ? 2 : 4;
     int skipR = plane ? 3 : 5;
 
-    int32_t _upBuff1[MAX_CU_SIZE + 2], *upBuff1 = _upBuff1 + 1;
-    int32_t _upBufft[MAX_CU_SIZE + 2], *upBufft = _upBufft + 1;
+    int8_t _upBuff1[MAX_CU_SIZE + 2], *upBuff1 = _upBuff1 + 1;
+    int8_t _upBufft[MAX_CU_SIZE + 2], *upBufft = _upBufft + 1;
+
+    // Dynamic Range: 64x64x14bpp = 24bits
+    int32_t tmp_stats[NUM_EDGETYPE];
+    // TODO: improve by uint64_t, but need Haswell SHLX
+    uint16_t tmp_count[NUM_EDGETYPE];
 
     // SAO_BO:
     {
@@ -622,29 +751,41 @@ void SAO::calcSaoStatsCu(int addr, int plane)
                 skipB = plane ? 1 : 3;
                 skipR = plane ? 3 : 5;
             }
-            stats = m_offsetOrg[plane][SAO_EO_0];
-            count = m_count[plane][SAO_EO_0];
 
             fenc = fenc0;
             rec  = rec0;
 
             startX = !lpelx;
             endX   = (rpelx == picWidth) ? ctuWidth - 1 : ctuWidth - skipR;
+
+            memset(tmp_stats, 0, sizeof(tmp_stats));
+            memset(tmp_count, 0, sizeof(tmp_count));
+
             for (y = 0; y < ctuHeight - skipB; y++)
             {
                 int signLeft = signOf(rec[startX] - rec[startX - 1]);
                 for (x = startX; x < endX; x++)
                 {
-                    int signRight = signOf(rec[x] - rec[x + 1]);
-                    int edgeType = signRight + signLeft + 2;
+                    int signRight = signOf2(rec[x], rec[x + 1]);
+                    X265_CHECK(signRight == signOf(rec[x] - rec[x + 1]), "signDown check failure\n");
+                    uint32_t edgeType = signRight + signLeft + 2;
                     signLeft = -signRight;
 
-                    stats[s_eoTable[edgeType]] += (fenc[x] - rec[x]);
-                    count[s_eoTable[edgeType]]++;
+                    X265_CHECK(edgeType <= 4, "edgeType check failure\n");
+                    tmp_stats[edgeType] += (fenc[x] - rec[x]);
+                    tmp_count[edgeType]++;
                 }
 
                 fenc += stride;
                 rec += stride;
+            }
+
+            stats = m_offsetOrg[plane][SAO_EO_0];
+            count = m_count[plane][SAO_EO_0];
+            for (x = 0; x < NUM_EDGETYPE; x++)
+            {
+                stats[s_eoTable[x]] += tmp_stats[x];
+                count[s_eoTable[x]] += tmp_count[x];
             }
         }
 
@@ -655,8 +796,6 @@ void SAO::calcSaoStatsCu(int addr, int plane)
                 skipB = plane ? 2 : 4;
                 skipR = plane ? 2 : 4;
             }
-            stats = m_offsetOrg[plane][SAO_EO_1];
-            count = m_count[plane][SAO_EO_1];
 
             fenc = fenc0;
             rec  = rec0;
@@ -670,23 +809,34 @@ void SAO::calcSaoStatsCu(int addr, int plane)
                 rec += stride;
             }
 
-            for (x = 0; x < ctuWidth; x++)
-                upBuff1[x] = signOf(rec[x] - rec[x - stride]);
+            primitives.sign(upBuff1, rec, &rec[- stride], ctuWidth);
+
+            memset(tmp_stats, 0, sizeof(tmp_stats));
+            memset(tmp_count, 0, sizeof(tmp_count));
 
             for (y = startY; y < endY; y++)
             {
                 for (x = 0; x < endX; x++)
                 {
-                    int signDown = signOf(rec[x] - rec[x + stride]);
-                    int edgeType = signDown + upBuff1[x] + 2;
-                    upBuff1[x] = -signDown;
+                    int signDown = signOf2(rec[x], rec[x + stride]);
+                    X265_CHECK(signDown == signOf(rec[x] - rec[x + stride]), "signDown check failure\n");
+                    uint32_t edgeType = signDown + upBuff1[x] + 2;
+                    upBuff1[x] = (int8_t)(-signDown);
 
-                    stats[s_eoTable[edgeType]] += (fenc[x] - rec[x]);
-                    count[s_eoTable[edgeType]]++;
+                    tmp_stats[edgeType] += (fenc[x] - rec[x]);
+                    tmp_count[edgeType]++;
                 }
 
                 fenc += stride;
                 rec += stride;
+            }
+
+            stats = m_offsetOrg[plane][SAO_EO_1];
+            count = m_count[plane][SAO_EO_1];
+            for (x = 0; x < NUM_EDGETYPE; x++)
+            {
+                stats[s_eoTable[x]] += tmp_stats[x];
+                count[s_eoTable[x]] += tmp_count[x];
             }
         }
 
@@ -714,26 +864,9 @@ void SAO::calcSaoStatsCu(int addr, int plane)
                 rec += stride;
             }
 
-            for (x = startX; x < endX; x++)
-                upBuff1[x] = signOf(rec[x] - rec[x - stride - 1]);
+            primitives.sign(&upBuff1[startX], &rec[startX], &rec[startX - stride - 1], (endX - startX));
 
-            for (y = startY; y < endY; y++)
-            {
-                upBufft[startX] = signOf(rec[startX + stride] - rec[startX - 1]);
-                for (x = startX; x < endX; x++)
-                {
-                    int signDown = signOf(rec[x] - rec[x + stride + 1]);
-                    int edgeType = signDown + upBuff1[x] + 2;
-                    upBufft[x + 1] = -signDown;
-                    stats[s_eoTable[edgeType]] += (fenc[x] - rec[x]);
-                    count[s_eoTable[edgeType]]++;
-                }
-
-                std::swap(upBuff1, upBufft);
-
-                rec += stride;
-                fenc += stride;
-            }
+            primitives.saoCuStatsE2(fenc0 + startX + startY * stride, rec0  + startX + startY * stride, stride, upBuff1 + startX, upBufft + startX, endX - startX, endY - startY, m_offsetOrg[plane][SAO_EO_2], m_count[plane][SAO_EO_2]);
         }
 
         // SAO_EO_3: // dir: 45
@@ -761,25 +894,9 @@ void SAO::calcSaoStatsCu(int addr, int plane)
                 rec += stride;
             }
 
-            for (x = startX - 1; x < endX; x++)
-                upBuff1[x] = signOf(rec[x] - rec[x - stride + 1]);
+            primitives.sign(&upBuff1[startX - 1], &rec[startX - 1], &rec[startX - 1 - stride + 1], (endX - startX + 1));
 
-            for (y = startY; y < endY; y++)
-            {
-                for (x = startX; x < endX; x++)
-                {
-                    int signDown = signOf(rec[x] - rec[x + stride - 1]);
-                    int edgeType = signDown + upBuff1[x] + 2;
-                    upBuff1[x - 1] = -signDown;
-                    stats[s_eoTable[edgeType]] += (fenc[x] - rec[x]);
-                    count[s_eoTable[edgeType]]++;
-                }
-
-                upBuff1[endX - 1] = signOf(rec[endX - 1 + stride] - rec[endX]);
-
-                rec += stride;
-                fenc += stride;
-            }
+            primitives.saoCuStatsE3(fenc0 + startX + startY * stride, rec0  + startX + startY * stride, stride, upBuff1 + startX, endX - startX, endY - startY, m_offsetOrg[plane][SAO_EO_3], m_count[plane][SAO_EO_3]);
         }
     }
 }
@@ -1214,7 +1331,7 @@ inline int64_t SAO::estSaoTypeDist(int plane, int typeIdx, double lambda, int32_
         if (count)
         {
             int offset = roundIBDI(offsetOrg, count << SAO_BIT_INC);
-            offset = Clip3(-OFFSET_THRESH + 1, OFFSET_THRESH - 1, offset);
+            offset = x265_clip3(-OFFSET_THRESH + 1, OFFSET_THRESH - 1, offset);
             if (typeIdx < SAO_BO)
             {
                 if (classIdx < 3)
@@ -1495,4 +1612,90 @@ void SAO::sao2ChromaParamDist(SAOParam* saoParam, int addr, int addrUp, int addr
         }
     }
 }
+
+// NOTE: must put in namespace X265_NS since we need class SAO
+void saoCuStatsE2_c(const pixel *fenc, const pixel *rec, intptr_t stride, int8_t *upBuff1, int8_t *upBufft, int endX, int endY, int32_t *stats, int32_t *count)
+{
+    X265_CHECK(endX < MAX_CU_SIZE, "endX check failure\n");
+    X265_CHECK(endY < MAX_CU_SIZE, "endY check failure\n");
+
+    int x, y;
+    int32_t tmp_stats[SAO::NUM_EDGETYPE];
+    int32_t tmp_count[SAO::NUM_EDGETYPE];
+
+    memset(tmp_stats, 0, sizeof(tmp_stats));
+    memset(tmp_count, 0, sizeof(tmp_count));
+
+    for (y = 0; y < endY; y++)
+    {
+        upBufft[0] = signOf(rec[stride] - rec[-1]);
+        for (x = 0; x < endX; x++)
+        {
+            int signDown = signOf2(rec[x], rec[x + stride + 1]);
+            X265_CHECK(signDown == signOf(rec[x] - rec[x + stride + 1]), "signDown check failure\n");
+            uint32_t edgeType = signDown + upBuff1[x] + 2;
+            upBufft[x + 1] = (int8_t)(-signDown);
+            tmp_stats[edgeType] += (fenc[x] - rec[x]);
+            tmp_count[edgeType]++;
+        }
+
+        std::swap(upBuff1, upBufft);
+
+        rec += stride;
+        fenc += stride;
+    }
+
+    for (x = 0; x < SAO::NUM_EDGETYPE; x++)
+    {
+        stats[SAO::s_eoTable[x]] += tmp_stats[x];
+        count[SAO::s_eoTable[x]] += tmp_count[x];
+    }
 }
+
+void saoCuStatsE3_c(const pixel *fenc, const pixel *rec, intptr_t stride, int8_t *upBuff1, int endX, int endY, int32_t *stats, int32_t *count)
+{
+    X265_CHECK(endX < MAX_CU_SIZE, "endX check failure\n");
+    X265_CHECK(endY < MAX_CU_SIZE, "endY check failure\n");
+
+    int x, y;
+    int32_t tmp_stats[SAO::NUM_EDGETYPE];
+    int32_t tmp_count[SAO::NUM_EDGETYPE];
+
+    memset(tmp_stats, 0, sizeof(tmp_stats));
+    memset(tmp_count, 0, sizeof(tmp_count));
+
+    for (y = 0; y < endY; y++)
+    {
+        for (x = 0; x < endX; x++)
+        {
+            int signDown = signOf2(rec[x], rec[x + stride - 1]);
+            X265_CHECK(signDown == signOf(rec[x] - rec[x + stride - 1]), "signDown check failure\n");
+            X265_CHECK(abs(upBuff1[x]) <= 1, "upBuffer1 check failure\n");
+
+            uint32_t edgeType = signDown + upBuff1[x] + 2;
+            upBuff1[x - 1] = (int8_t)(-signDown);
+            tmp_stats[edgeType] += (fenc[x] - rec[x]);
+            tmp_count[edgeType]++;
+        }
+
+        upBuff1[endX - 1] = signOf(rec[endX - 1 + stride] - rec[endX]);
+
+        rec += stride;
+        fenc += stride;
+    }
+
+    for (x = 0; x < SAO::NUM_EDGETYPE; x++)
+    {
+        stats[SAO::s_eoTable[x]] += tmp_stats[x];
+        count[SAO::s_eoTable[x]] += tmp_count[x];
+    }
+}
+
+void setupSaoPrimitives_c(EncoderPrimitives &p)
+{
+    // TODO: move other sao functions to here
+    p.saoCuStatsE2 = saoCuStatsE2_c;
+    p.saoCuStatsE3 = saoCuStatsE3_c;
+}
+}
+

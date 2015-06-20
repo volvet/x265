@@ -1,7 +1,8 @@
 /*****************************************************************************
- * Copyright (C) 2013 x265 project
+ * Copyright (C) 2013-2015 x265 project
  *
  * Authors: Steve Borho <steve@borho.org>
+ *          Xinyue Lu <i@7086.in>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,9 +26,11 @@
 #include "yuv.h"
 #include "y4m.h"
 
-using namespace x265;
+#include "raw.h"
 
-Output* Output::open(const char *fname, int width, int height, uint32_t bitdepth, uint32_t fpsNum, uint32_t fpsDenom, int csp)
+using namespace X265_NS;
+
+ReconFile* ReconFile::open(const char *fname, int width, int height, uint32_t bitdepth, uint32_t fpsNum, uint32_t fpsDenom, int csp)
 {
     const char * s = strrchr(fname, '.');
 
@@ -35,4 +38,9 @@ Output* Output::open(const char *fname, int width, int height, uint32_t bitdepth
         return new Y4MOutput(fname, width, height, fpsNum, fpsDenom, csp);
     else
         return new YUVOutput(fname, width, height, bitdepth, csp);
+}
+
+OutputFile* OutputFile::open(const char *fname, InputFileInfo& inputInfo)
+{
+    return new RAWOutput(fname, inputInfo);
 }

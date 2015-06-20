@@ -1,5 +1,5 @@
 /*****************************************************************************
-* Copyright (C) 2014 x265 project
+* Copyright (C) 2015 x265 project
 *
 * Authors: Steve Borho <steve@borho.org>
 *
@@ -102,7 +102,9 @@
 #define OFF_TQUANT_BYPASS_FLAG_CTX (OFF_TRANSFORMSKIP_FLAG_CTX + 2 * NUM_TRANSFORMSKIP_FLAG_CTX)
 #define MAX_OFF_CTX_MOD            (OFF_TQUANT_BYPASS_FLAG_CTX +     NUM_TQUANT_BYPASS_FLAG_CTX)
 
-namespace x265 {
+extern "C" const uint32_t PFX(entropyStateBits)[128];
+
+namespace X265_NS {
 // private namespace
 
 extern const uint32_t g_entropyBits[128];

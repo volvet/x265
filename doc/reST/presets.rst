@@ -24,19 +24,21 @@ The presets adjust encoder parameters to affect these trade-offs.
 +==============+===========+===========+==========+========+======+========+======+========+==========+=========+
 | ctu          |   32      |    32     |   32     |  64    |  64  |   64   |  64  |  64    |   64     |   64    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
-| bframes      |    4      |     4     |    4     |   4    |  4   |    4   |  4   |   8    |    8     |    8    |
+| min-cu-size  |   16      |     8     |    8     |   8    |   8  |    8   |   8  |   8    |    8     |    8    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
-| b-adapt      |    0      |     0     |    0     |   0    |  2   |    2   |  2   |   2    |    2     |    2    |
+| bframes      |    3      |     3     |    4     |   4    |  4   |    4   |  4   |   8    |    8     |    8    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
-| rc-lookahead |   10      |    10     |   15     |  15    |  15  |   20   |  25  |   30   |   40     |   60    |
+| b-adapt      |    0      |     0     |    0     |   0    |  0   |    2   |  2   |   2    |    2     |    2    |
++--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
+| rc-lookahead |    5      |    10     |   15     |  15    |  15  |   20   |  25  |   30   |   40     |   60    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 | scenecut     |    0      |    40     |   40     |  40    |  40  |   40   |  40  |   40   |   40     |   40    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
-| refs         |    1      |     1     |    1     |   1    |  3   |    3   |  3   |   3    |    5     |    5    |
+| refs         |    1      |     1     |    1     |   1    |  2   |    3   |  3   |   3    |    5     |    5    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 | me           |   dia     |   hex     |   hex    |  hex   | hex  |   hex  | star |  star  |   star   |   star  |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
-| merange      |   25      |    44     |   57     |  57    |  57  |   57   | 57   |  57    |   57     |   92    |
+| merange      |   57      |    57     |   57     |  57    |  57  |   57   | 57   |  57    |   57     |   92    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 | subme        |    0      |     1     |    1     |   2    |  2   |    2   |  3   |   3    |    4     |    5    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
@@ -60,13 +62,13 @@ The presets adjust encoder parameters to affect these trade-offs.
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 | weightb      |    0      |     0     |    0     |   0    |  0   |    0   |  0   |   1    |    1     |    1    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
-| aq-mode      |    0      |     0     |    2     |   2    |  2   |    2   |  2   |   2    |    2     |    2    |
+| aq-mode      |    0      |     0     |    1     |   1    |  1   |    1   |  1   |   1    |    1     |    1    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 | cuTree       |    0      |     0     |    0     |   0    |  1   |    1   |  1   |   1    |    1     |    1    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 | rdLevel      |    2      |     2     |    2     |   2    |  2   |    3   |  4   |   6    |    6     |    6    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
-| deblock      |    0      |     1     |    1     |   1    |  1   |    1   |  1   |   1    |    1     |    1    |
+| rdoq-level   |    0      |     0     |    0     |   0    |  0   |    0   |  2   |   2    |    2     |    2    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
 | tu-intra     |    1      |     1     |    1     |   1    |  1   |    1   |  1   |   2    |    3     |    4    |
 +--------------+-----------+-----------+----------+--------+------+--------+------+--------+----------+---------+
@@ -105,29 +107,23 @@ after the preset.
 +--------------+-----------------------------------------------------+
 | zerolatency  | no lookahead, no B frames, no cutree                |
 +--------------+-----------------------------------------------------+
-| cbr          | --pbratio 1.0 --ratetol 0.5                         |
-+--------------+-----------------------------------------------------+
+
 
 
 Film Grain Retention
 ~~~~~~~~~~~~~~~~~~~~
 
-:option:`--tune` grain tries to improve the retention of film grain in
-the reconstructed output. It helps rate distortion optimizations select
-modes which preserve high frequency noise:
+:option:`--tune` *grain* tries to improve the retention of film grain in
+the reconstructed output. It disables rate distortion optimizations in
+quantization, and increases the default psy-rd.
 
     * :option:`--psy-rd` 0.5
-    * :option:`--psy-rdoq` 30
-
-.. Note::
-
-    --psy-rdoq is only effective when RDOQuant is enabled, which is at
-    RD levels 4, 5, and 6 (presets slow and below).
+    * :option:`--rdoq-level` 0
+    * :option:`--psy-rdoq` 0
 
 It lowers the strength of adaptive quantization, so residual energy can
 be more evenly distributed across the (noisy) picture:
 
-    * :option:`--aq-mode` 1
     * :option:`--aq-strength` 0.3
 
 And it similarly tunes rate control to prevent the slice QP from
@@ -142,3 +138,45 @@ blurred on block boundaries:
 
     * :option:`--deblock` -2
 
+Fast Decode
+~~~~~~~~~~~
+
+:option:`--tune` *fastdecode* disables encoder features which tend to be
+bottlenecks for the decoder. It is intended for use with 4K content at
+high bitrates which can cause decoders to struggle. It disables both
+HEVC loop filters, which tend to be process bottlenecks:
+
+    * :option:`--no-deblock`
+    * :option:`--no-sao`
+
+It disables weighted prediction, which tend to be bandwidth bottlenecks:
+
+    * :option:`--no-weightp`
+    * :option:`--no-weightb`
+
+And it disables intra blocks in B frames with :option:`--no-b-intra`
+since intra predicted blocks cause serial dependencies in the decoder.
+
+Zero Latency
+~~~~~~~~~~~~
+
+There are two halves to the latency problem. There is latency at the
+decoder and latency at the encoder. :option:`--tune` *zerolatency*
+removes latency from both sides. The decoder latency is removed by:
+
+    * :option:`--bframes` 0
+
+Encoder latency is removed by:
+
+    * :option:`--b-adapt` 0
+    * :option:`--rc-lookahead` 0
+    * :option:`--no-scenecut`
+    * :option:`--no-cutree`
+    * :option:`--frame-threads` 1
+
+With all of these settings x265_encoder_encode() will run synchronously,
+the picture passed as pic_in will be encoded and returned as NALs. These
+settings disable frame parallelism, which is an important component for
+x265 performance. If you can tolerate any latency on the encoder, you
+can increase performance by increasing the number of frame threads. Each
+additional frame thread adds one frame of latency.
